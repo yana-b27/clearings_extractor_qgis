@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/clearings_extractor" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
