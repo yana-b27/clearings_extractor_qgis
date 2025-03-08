@@ -16,17 +16,19 @@ The plugin extracts forest clearings under power lines on Sentinel-2 satellite i
 
 Below is the structure of the plugin directory:
 
+```
 clearings_extractor_qgis/
-📜 __init__.py
-📜 clearings_extractor.py
-📜 clearings_extractor_dialog.py
-📜 clearings_extractor_dialog_base.ui
-📜 extraction_algorithm.py
-📜 resources.py
-📁 help/
-   └─ 📜 index.rst
-📁 i18n/
-   └─ 📜 ClearingsExtractor_en.ts
-📜 README.md
-📜 pb_tool.cfg
-📜 plugin_upload.py
+├── __init__.py                   # Plugin metadata and initialization
+├── clearings_extractor.py        # Main plugin logic and dialog handling
+├── clearings_extractor_dialog.py # Dialog class generated from UI file
+├── clearings_extractor_dialog_base.ui # QGIS UI design file (Qt Designer)
+├── extraction_algorithm.py       # Core algorithm for clearing detection
+├── resources.py                  # Compiled resources (e.g., icons)
+├── help/                         # Documentation files
+│   └── index.rst                 # Main help file in reStructuredText
+├── i18n/                         # Internationalization files
+│   └── ClearingsExtractor_en.ts  # English translation file
+├── README.md                     # This file, plugin overview
+├── pb_tool.cfg                   # Configuration for pb_tool (optional)
+└── plugin_upload.py              # Script for uploading to QGIS repository
+```
