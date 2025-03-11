@@ -20,16 +20,18 @@
  *                                                                         *
  ***************************************************************************/
 """
-
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QIcon, QColor, QFont
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import QgsProject, QgsRasterLayer
+from qgis.core import (QgsProcessingAlgorithm, QgsProcessingParameterRasterLayer, 
+                       QgsProcessingParameterFolderDestination, QgsProcessingProvider,
+                       QgsProcessingParameterString, QgsProject, QgsRasterLayer)
+from qgis.utils import iface
+import processing
 from .extraction_algorithm import find_clearing_algorithm
 import os
 from osgeo import gdal
 from .resources import *
-
 
 class ClearingsExtractor:
     """
@@ -62,20 +64,20 @@ class ClearingsExtractor:
         clear_inputs():
             Clears the input fields and log messages in the plugin dialog.
     """
-
     def __init__(self, iface):
         """
-        Initializes the ClearingsExtractor plugin.
-
+        Initialize the ClearingsExtractor plugin.
         Args:
             iface (QgsInterface): An interface instance that will be passed to this class
                                   which provides the hook by which you can manipulate the QGIS application at run time.
         """
+        
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
         self.actions = []
-        self.menu = self.tr("&Clearings Extractor")
+        self.menu = self.tr(u'&Clearings Extractor')
         self.first_start = None
+        self.provider = ClearingsExtractorProvider()
 
     def tr(self, message):
         """
@@ -87,20 +89,9 @@ class ClearingsExtractor:
         Returns:
             str: The translated message string.
         """
-        return QCoreApplication.translate("ClearingsExtractor", message)
+        return QCoreApplication.translate('ClearingsExtractor', message)
 
-    def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None,
-    ):
+    def add_action(self, icon_path, text, callback, enabled_flag=True, add_to_menu=True, add_to_toolbar=True, status_tip=None, whats_this=None, parent=None):
         """
         Adds an action to the QGIS interface with specified properties.
 
@@ -134,32 +125,33 @@ class ClearingsExtractor:
         return action
 
     def initGui(self):
-        """
-        Initializes the graphical user interface for the ClearingsExtractor plugin.
-
-        This function sets up the plugin's action in the QGIS interface, allowing users
-        to interact with the plugin through the GUI. It adds an action to the toolbar
-        and menu, which users can click to run the plugin.
-        """
         self.add_action(
             None,
-            text=self.tr("Extract Clearings"),
+            text=self.tr(u'Extract Clearings'),
             callback=self.run,
             parent=self.iface.mainWindow(),
-            add_to_toolbar=False,
+            add_to_toolbar=False
         )
         self.first_start = True
+        
+        from qgis.core import QgsApplication
+        QgsApplication.processingRegistry().addProvider(self.provider)
 
     def unload(self):
         """
         Unloads the plugin by removing its actions from the QGIS interface.
-
-        This method iterates through the list of actions associated with the plugin
-        and removes each action from the plugin menu and toolbar.
+        This method performs the following actions:
+        1. Iterates through the list of actions and removes each action from the plugin menu and toolbar.
+        2. Removes the custom processing provider from the QGIS processing registry.
+        Note:
+            This method is typically called when the plugin is being disabled or uninstalled.
         """
         for action in self.actions:
-            self.iface.removePluginMenu(self.tr("&Clearings Extractor"), action)
+            self.iface.removePluginMenu(self.tr(u'&Clearings Extractor'), action)
             self.iface.removeToolBarIcon(action)
+            
+        from qgis.core import QgsApplication
+        QgsApplication.processingRegistry().removeProvider(self.provider)
 
     def select_file(self, line_edit, file_filter):
         """
@@ -169,9 +161,7 @@ class ClearingsExtractor:
             line_edit (QLineEdit): The line edit widget where the selected file path will be set.
             file_filter (str): The file filter for the file dialog (e.g., "Text Files (*.txt);;All Files (*)").
         """
-        filename, _ = QFileDialog.getOpenFileName(
-            self.dlg, "Select File", "", file_filter
-        )
+        filename, _ = QFileDialog.getOpenFileName(self.dlg, "Select File", "", file_filter)
         if filename:
             line_edit.setText(filename)
 
@@ -182,12 +172,10 @@ class ClearingsExtractor:
         Args:
             line_edit (QLineEdit): The QLineEdit widget where the selected directory path will be set.
         """
-        directory = QFileDialog.getExistingDirectory(
-            self.dlg, "Select Output Directory"
-        )
+        directory = QFileDialog.getExistingDirectory(self.dlg, "Select Output Directory")
         if directory:
             line_edit.setText(directory)
-
+            
     def log_message(self, message):
         """
         Logs a message to the logTextEdit widget with appropriate formatting based on the message content.
@@ -205,7 +193,7 @@ class ClearingsExtractor:
         else:
             self.dlg.logTextEdit.setTextColor(QColor("black"))
             self.dlg.logTextEdit.setFontWeight(QFont.Normal)
-
+        
         self.dlg.logTextEdit.append(message)
         self.dlg.logTextEdit.setTextColor(QColor("black"))
         self.dlg.logTextEdit.setFontWeight(QFont.Normal)
@@ -229,18 +217,11 @@ class ClearingsExtractor:
         if self.first_start:
             self.first_start = False
             from .clearings_extractor_dialog import ClearingsExtractorDialog
-
             self.dlg = ClearingsExtractorDialog()
             self.dlg.setWindowTitle("Clearings Extractor")
-            self.dlg.summerBrowseButton.clicked.connect(
-                lambda: self.select_file(self.dlg.summerLineEdit, "Images (*.tif)")
-            )
-            self.dlg.winterBrowseButton.clicked.connect(
-                lambda: self.select_file(self.dlg.winterLineEdit, "Images (*.tif)")
-            )
-            self.dlg.outputDirButton.clicked.connect(
-                lambda: self.select_directory(self.dlg.outputDirLineEdit)
-            )
+            self.dlg.summerBrowseButton.clicked.connect(lambda: self.select_file(self.dlg.summerLineEdit, "Images (*.tif)"))
+            self.dlg.winterBrowseButton.clicked.connect(lambda: self.select_file(self.dlg.winterLineEdit, "Images (*.tif)"))
+            self.dlg.outputDirButton.clicked.connect(lambda: self.select_directory(self.dlg.outputDirLineEdit))
             self.dlg.runButton.clicked.connect(self.process_images)
             self.dlg.clearButton.clicked.connect(self.clear_inputs)
             self.dlg.logTextEdit.clear()
@@ -269,15 +250,13 @@ class ClearingsExtractor:
 
         self.log_message("Checking input files...")
         if not (summer_path and winter_path and output_dir):
-            self.log_message(
-                "Error: Please select summer image, winter image, and output directory"
-            )
+            self.log_message("Error: Please select summer image, winter image, and output directory")
             return
 
         self.log_message("Opening images...")
         summer_ds = gdal.Open(summer_path)
         winter_ds = gdal.Open(winter_path)
-
+        
         if summer_ds is None or winter_ds is None:
             self.log_message("Error: Failed to open one or both tiff images")
             return
@@ -298,9 +277,7 @@ class ClearingsExtractor:
         summer_size = (summer_ds.RasterXSize, summer_ds.RasterYSize)
         winter_size = (winter_ds.RasterXSize, winter_ds.RasterYSize)
         if summer_size != winter_size:
-            self.log_message(
-                "Error: Summer and winter images must have the same pixel dimensions"
-            )
+            self.log_message("Error: Summer and winter images must have the same pixel dimensions")
             summer_ds = None
             winter_ds = None
             return
@@ -320,9 +297,7 @@ class ClearingsExtractor:
         self.log_message("Algorithm finished...")
 
         self.log_message("Exporting results...")
-        output_filename = (
-            self.dlg.outputFileLineEdit.text().strip() or "power_line_clearings.tif"
-        )
+        output_filename = self.dlg.outputFileLineEdit.text().strip() or "power_line_clearings.tif"
         if not output_filename.endswith(".tif"):
             output_filename += ".tif"
         temp_tiff = os.path.join(output_dir, output_filename)
@@ -331,34 +306,24 @@ class ClearingsExtractor:
         existing_layer = QgsProject.instance().mapLayersByName("power_line_clearings")
         if existing_layer:
             QgsProject.instance().removeMapLayer(existing_layer[0].id())
-            QCoreApplication.processEvents()
+            QCoreApplication.processEvents() 
 
         if os.path.exists(temp_tiff):
             try:
                 os.remove(temp_tiff)
             except PermissionError:
-                self.log_message(
-                    f"Error: Could not delete {temp_tiff}. File may be locked by another process."
-                )
+                self.log_message(f"Error: Could not delete {temp_tiff}. File may be locked by another process.")
                 return
 
         driver = gdal.GetDriverByName("GTiff")
-        out_ds = driver.Create(
-            temp_tiff,
-            power_line_clearings.shape[1],
-            power_line_clearings.shape[0],
-            4,
-            gdal.GDT_Byte,
-        )
+        out_ds = driver.Create(temp_tiff, power_line_clearings.shape[1], power_line_clearings.shape[0], 4, gdal.GDT_Byte)
         if out_ds is None:
-            self.log_message(
-                f"Error: Failed to create {temp_tiff}. Check permissions or disk space."
-            )
+            self.log_message(f"Error: Failed to create {temp_tiff}. Check permissions or disk space.")
             return
-
+        
         for i in range(4):
             out_ds.GetRasterBand(i + 1).WriteArray(power_line_clearings[:, :, i])
-
+        
         src_ds = gdal.Open(summer_path)
         out_ds.SetGeoTransform(src_ds.GetGeoTransform())
         out_ds.SetProjection(src_ds.GetProjection())
@@ -367,7 +332,7 @@ class ClearingsExtractor:
         src_ds = None
 
         self.log_message("Saving completed...")
-
+        
         if self.dlg.addImagesCheckBox.isChecked():
             self.log_message("Adding source images on the map...")
             winter_layer = QgsRasterLayer(winter_path, "winter_image")
@@ -377,7 +342,7 @@ class ClearingsExtractor:
                 QgsProject.instance().addMapLayer(summer_layer)
             else:
                 self.log_message("Error: Failed to load one or both source images")
-
+                
         self.log_message("Adding results on the map...")
         clearings_layer = QgsRasterLayer(temp_tiff, "power_line_clearings")
         if not clearings_layer.isValid():
@@ -386,17 +351,15 @@ class ClearingsExtractor:
         QgsProject.instance().addMapLayer(clearings_layer)
 
         self.log_message("Process completed")
-        self.log_message(
-            f"Success: Power line clearings extracted and saved to {temp_tiff}"
-        )
-
+        self.log_message(f"Success: Power line clearings extracted and saved to {temp_tiff}")
+        
     def clear_inputs(self):
         """
         Clears the input fields in the dialog.
 
-        This method clears the text in the summerLineEdit, winterLineEdit,
-        outputDirLineEdit, and logTextEdit fields of the dialog. It also logs
-        a message indicating that the inputs have been cleared and prompts
+        This method clears the text in the summerLineEdit, winterLineEdit, 
+        outputDirLineEdit, and logTextEdit fields of the dialog. It also logs 
+        a message indicating that the inputs have been cleared and prompts 
         the user to click Run to process.
         """
         self.dlg.summerLineEdit.clear()
@@ -404,3 +367,340 @@ class ClearingsExtractor:
         self.dlg.outputDirLineEdit.clear()
         self.dlg.logTextEdit.clear()
         self.log_message("Inputs cleared. Click Run to process")
+        
+class ClearingsExtractorAlgorithm(QgsProcessingAlgorithm):
+    """
+    ClearingsExtractorAlgorithm is a QGIS Processing Algorithm that extracts clearings from a pair of summer and winter images.
+    Attributes:
+        SUMMER_IMAGE (str): Parameter name for the summer image raster layer.
+        WINTER_IMAGE (str): Parameter name for the winter image raster layer.
+        OUTPUT_DIR (str): Parameter name for the output directory.
+    Methods:
+        initAlgorithm(config=None):
+            Initializes the algorithm with the required parameters.
+        processAlgorithm(parameters, context, feedback):
+            Processes the input summer and winter images to extract clearings and saves the result to the specified output directory.
+        name():
+            Returns the unique algorithm name.
+        displayName():
+            Returns the display name of the algorithm.
+        group():
+            Returns the group name of the algorithm.
+        groupId():
+            Returns the unique group ID of the algorithm.
+        createInstance():
+            Creates and returns a new instance of the algorithm.
+    """
+    SUMMER_IMAGE = 'SUMMER_IMAGE'
+    WINTER_IMAGE = 'WINTER_IMAGE'
+    OUTPUT_DIR = 'OUTPUT_DIR'
+
+    def initAlgorithm(self, config=None):
+        """
+        Initializes the algorithm with the given configuration.
+
+        This method adds the required parameters for the algorithm:
+        - A raster layer parameter for the summer image.
+        - A raster layer parameter for the winter image.
+        - A folder destination parameter for the output directory.
+
+        Args:
+            config (dict, optional): Configuration dictionary. Defaults to None.
+        """
+        self.addParameter(QgsProcessingParameterRasterLayer(self.SUMMER_IMAGE, 'Summer Image'))
+        self.addParameter(QgsProcessingParameterRasterLayer(self.WINTER_IMAGE, 'Winter Image'))
+        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, 'Output Directory'))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        """
+        Processes the algorithm to detect power line clearings from summer and winter images.
+        Parameters:
+        - parameters: dict
+            Dictionary of parameters passed to the algorithm.
+        - context: QgsProcessingContext
+            Context in which the algorithm is run.
+        - feedback: QgsProcessingFeedback
+            Feedback object to report progress and information.
+        Returns:
+        - dict
+            Dictionary containing the output file path with key 'OUTPUT'.
+        The function performs the following steps:
+        1. Retrieves the summer and winter raster layers and output directory from parameters.
+        2. Checks if the images have the required number of bands and matching dimensions.
+        3. Runs the clearing detection algorithm.
+        4. Saves the resulting clearings to a GeoTIFF file.
+        5. Adds the resulting layer to the QGIS project.
+        Raises:
+        - Exception: If the clearing detection algorithm fails.
+        """
+        summer_layer = self.parameterAsRasterLayer(parameters, self.SUMMER_IMAGE, context)
+        winter_layer = self.parameterAsRasterLayer(parameters, self.WINTER_IMAGE, context)
+        output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
+
+        summer_path = summer_layer.source()
+        winter_path = winter_layer.source()
+
+        feedback.pushInfo(f"Processing pair: {os.path.basename(summer_path)} (summer image) and {os.path.basename(winter_path)} (winter image)")
+
+        summer_ds = gdal.Open(summer_path)
+        winter_ds = gdal.Open(winter_path)
+        if summer_ds is None or winter_ds is None:
+            feedback.pushInfo(f'[ERROR] Failed to open files')
+            return {}
+        feedback.pushInfo(f"Checking image bands...")
+        if summer_ds.RasterCount < 5:
+            feedback.pushInfo(f'[ERROR] Summer image must have at least 5 bands')
+            return {}
+        if winter_ds.RasterCount < 3:
+            feedback.pushInfo(f'[ERROR] Winter image must have at least 3 bands')
+            return {}
+        feedback.pushInfo(f"Checking image dimensions...")
+        if (summer_ds.RasterXSize, summer_ds.RasterYSize) != (winter_ds.RasterXSize, winter_ds.RasterYSize):
+            feedback.pushInfo(f'[ERROR] Dimension mismatch between images')
+            return {}
+        summer_ds = None
+        winter_ds = None
+
+        feedback.pushInfo(f'Running algorithm...')
+        try:
+            power_line_clearings = find_clearing_algorithm(summer_path, winter_path)
+        except Exception as e:
+            feedback.pushInfo(f'[ERROR] Algorithm failed: {str(e)}')
+            return {}
+        feedback.pushInfo(f'Algorithm finished...')
+        
+        output_filename = f"{os.path.splitext(os.path.basename(summer_path))[0]}_clearings.tif"
+        temp_tiff = os.path.join(output_dir, output_filename)
+        feedback.pushInfo(f'Results will be saved to {temp_tiff}')
+
+        if os.path.exists(temp_tiff):
+            try:
+                os.remove(temp_tiff)
+                feedback.pushInfo(f'Removed existing file: {temp_tiff}')
+            except PermissionError:
+                feedback.pushInfo(f'[ERROR] Could not delete {temp_tiff}. File may be locked.')
+                return {}
+
+        feedback.pushInfo(f'Exporting results...')
+        driver = gdal.GetDriverByName("GTiff")
+        out_ds = driver.Create(temp_tiff, power_line_clearings.shape[1], power_line_clearings.shape[0], 4, gdal.GDT_Byte)
+        if out_ds is None:
+            feedback.pushInfo(f'[ERROR] Failed to create {temp_tiff}')
+            return {}
+        
+        for i in range(4):
+            out_ds.GetRasterBand(i + 1).WriteArray(power_line_clearings[:, :, i])
+        
+        src_ds = gdal.Open(summer_path)
+        out_ds.SetGeoTransform(src_ds.GetGeoTransform())
+        out_ds.SetProjection(src_ds.GetProjection())
+        out_ds.FlushCache()
+        out_ds = None
+        src_ds = None
+
+        feedback.pushInfo(f'[SUCCESS] Saved to {temp_tiff}')
+    
+        layer_name = f"clearings_{os.path.splitext(os.path.basename(summer_path))[0]}"
+        clearings_layer = QgsRasterLayer(temp_tiff, layer_name)
+        if clearings_layer.isValid():
+            existing_layer = QgsProject.instance().mapLayersByName(layer_name)
+            if existing_layer:
+                QgsProject.instance().removeMapLayer(existing_layer[0].id())
+                feedback.pushInfo(f'Removed existing layer: {layer_name}')
+            QgsProject.instance().addMapLayer(clearings_layer)
+            feedback.pushInfo(f'[SUCCESS] Data loaded to map as layer: {layer_name}')
+        else:
+            feedback.pushInfo(f'[ERROR] Failed to load layer from {temp_tiff}')
+            return {'OUTPUT': temp_tiff}
+
+        feedback.pushInfo(f'[SUCCESS] Algorithm completed')
+        return {'OUTPUT': temp_tiff}
+
+    def name(self):
+        return 'clearings_extractor'
+
+    def displayName(self):
+        return 'Extract Clearings'
+
+    def group(self):
+        return 'Clearings Extractor'
+
+    def groupId(self):
+        return 'clearings_tools'
+
+    def createInstance(self):
+        return ClearingsExtractorAlgorithm()
+    
+    def shortHelpString(self):
+        return """
+The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+
+Steps:
+1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.
+2. Choose output directory for result.
+3. Click Run to process.
+        """
+
+    
+class IterateClearingsExtractor(QgsProcessingAlgorithm):
+    """
+    IterateClearingsExtractor is a QGIS Processing Algorithm that processes pairs of summer and winter Sentinel-2 images at once to extract forest clearings under power lines.
+    Attributes:
+        SUMMER_DIR (str): Parameter name for the summer images directory.
+        WINTER_DIR (str): Parameter name for the winter images directory.
+        OUTPUT_DIR (str): Parameter name for the output directory.
+    Methods:
+        initAlgorithm(config=None):
+            Initializes the algorithm with the required parameters.
+        processAlgorithm(parameters, context, feedback):
+            Processes the algorithm by iterating through summer images, matching them with corresponding winter images, and saving the results.
+        name():
+            Returns the algorithm name.
+        displayName():
+            Returns the display name of the algorithm.
+        group():
+            Returns the group name of the algorithm.
+        groupId():
+            Returns the group ID of the algorithm.
+        createInstance():
+            Creates a new instance of the algorithm.
+        shortHelpString():
+            Returns a short help string describing the algorithm and its requirements.
+    """
+    SUMMER_DIR = 'SUMMER_DIR'
+    WINTER_DIR = 'WINTER_DIR'
+    OUTPUT_DIR = 'OUTPUT_DIR'
+
+    def initAlgorithm(self, config=None):
+        """
+        Initializes the algorithm with the given configuration.
+
+        This method adds three parameters to the algorithm:
+        1. SUMMER_DIR: A string parameter representing the directory of summer images.
+        2. WINTER_DIR: A string parameter representing the directory of winter images.
+        3. OUTPUT_DIR: A folder destination parameter representing the output directory.
+
+        Args:
+            config (dict, optional): Configuration dictionary. Defaults to None.
+        """
+        self.addParameter(QgsProcessingParameterString(self.SUMMER_DIR, 'Summer Images Directory'))
+        self.addParameter(QgsProcessingParameterString(self.WINTER_DIR, 'Winter Images Directory'))
+        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, 'Output Directory'))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        """
+        Processes the algorithm to extract clearings from summer and winter images.
+
+        Parameters:
+        parameters (dict): Dictionary of parameters passed to the algorithm.
+        context (QgsProcessingContext): Context in which the algorithm is run.
+        feedback (QgsProcessingFeedback): Feedback object to report progress and information.
+
+        Returns:
+        dict: A dictionary containing the output paths of the processed files.
+
+        The function performs the following steps:
+        1. Retrieves the directories for summer images, winter images, and output from the parameters.
+        2. Lists all summer image files in the summer directory.
+        3. For each summer image file, checks if a corresponding winter image file exists in the winter directory.
+        4. If both summer and winter image files are valid, runs the "clearings_extractor:clearings_extractor" processing algorithm.
+        5. Collects the output paths of successfully processed files.
+        6. Returns a dictionary containing the list of output paths.
+        """
+        summer_dir = self.parameterAsString(parameters, self.SUMMER_DIR, context)
+        winter_dir = self.parameterAsString(parameters, self.WINTER_DIR, context)
+        output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
+
+        summer_files = [f for f in os.listdir(summer_dir) if f.endswith('.tif')]
+        feedback.pushInfo(f"Found {len(summer_files)} summer images")
+
+        processed_files = []
+        for summer_file in summer_files:
+            winter_file = summer_file
+            winter_path = os.path.join(winter_dir, winter_file)
+
+            if os.path.exists(winter_path):
+                summer_path = os.path.join(summer_dir, summer_file)
+                feedback.pushInfo(f"Processing pair: {summer_file} (summer image) and {winter_file} (winter image)")
+
+                summer_layer = QgsRasterLayer(summer_path, "summer")
+                winter_layer = QgsRasterLayer(winter_path, "winter")
+                if not summer_layer.isValid() or not winter_layer.isValid():
+                    feedback.pushInfo(f'[ERROR] Failed to load {summer_file} or {winter_file}')
+                    continue
+
+                alg_params = {
+                    'SUMMER_IMAGE': summer_layer,
+                    'WINTER_IMAGE': winter_layer,
+                    'OUTPUT_DIR': output_dir
+                }
+                result = processing.run("clearings_extractor:clearings_extractor", alg_params, context=context, feedback=feedback)
+
+                if 'OUTPUT' in result:
+                    output_path = result['OUTPUT']
+                    processed_files.append(output_path)
+                    feedback.pushInfo(f'[SUCCESS] Completed: {output_path}')
+                else:
+                    feedback.pushInfo(f'[ERROR] Failed to process {summer_file}')
+
+        feedback.pushInfo(f'[SUCCESS] Algorithm completed')
+        return {'OUTPUT': processed_files}
+
+    def name(self):
+        return 'iterate_clearings_extractor'
+
+    def displayName(self):
+        return 'Iterate Clearings Extractor'
+
+    def group(self):
+        return 'Clearings Extractor Tools'
+
+    def groupId(self):
+        return 'clearings_tools'
+
+    def createInstance(self):
+        return IterateClearingsExtractor()
+    
+    def shortHelpString(self):
+        return """
+The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+
+The algorithm receives two directories as input - one with summer images and one with winter images. The filenames of the images for the same area must match for the algorithm to successfully find the winter image that corresponds to the summer image for a given area. The algorithm processes each pair of images iteratively until all pairs in the two directories have been processed.
+
+Steps:
+1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.
+2. Choose output directory for result.
+3. Click Run to process.
+        """
+
+class ClearingsExtractorProvider(QgsProcessingProvider):
+    """
+    ClearingsExtractorProvider is a custom QgsProcessingProvider that adds
+    algorithms for extracting clearings.
+
+    Methods
+    -------
+    loadAlgorithms(*args, **kwargs)
+        Adds the ClearingsExtractorAlgorithm and IterateClearingsExtractor algorithms to the provider.
+
+    id(*args, **kwargs)
+        Returns the unique identifier for this provider.
+
+    name(*args, **kwargs)
+        Returns the name of this provider.
+
+    longName(*args, **kwargs)
+        Returns the long name of this provider, which is the same as the name.
+    """
+    def loadAlgorithms(self, *args, **kwargs):
+        self.addAlgorithm(ClearingsExtractorAlgorithm())
+        self.addAlgorithm(IterateClearingsExtractor())
+
+    def id(self, *args, **kwargs):
+        return 'clearings_extractor'
+
+    def name(self, *args, **kwargs):
+        return 'Clearings Extractor'
+
+    def longName(self, *args, **kwargs):
+        return self.name()
