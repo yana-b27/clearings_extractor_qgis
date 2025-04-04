@@ -1,6 +1,6 @@
 # Power line clearings extractor
 
-"Power line clearings extractor" is a QGIS plugin designed to extract forest clearings under power lines from pairs of summer and winter Sentinel-2 satellite imagery. It provides a user-friendly dialog interface and advanced tools integrated into the QGIS Processing Toolbox, allowing users to process individual image pairs or batches of images efficiently. The plugin includes a custom graphical QGIS model for enhanced processing capabilities.
+"Power line clearings extractor" is a QGIS plugin designed to extract forest clearings under power lines from pairs of summer and winter Sentinel-2 satellite imagery. It provides a user-friendly dialog interface and advanced tools integrated into the QGIS Processing Toolbox, allowing users to process individual image pairs or batches of images efficiently.
 
 The plugin automates:
 - Validation of input raster images (band count and dimensions).
@@ -20,7 +20,6 @@ The plugin automates:
 2. **Processing Toolbox Integration**
    - `Extract Clearings`: Process a single pair of images.
    - `Iterate Clearings Extractor`: Batch process multiple image pairs from directories.
-   - `clearings_qgis_model`: A custom graphical model for specialized clearing extraction.
 
 3. **Core Functionality**
    - Validates summer images (≥5 bands) and winter images (≥3 bands).
