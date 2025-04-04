@@ -8,8 +8,6 @@ The plugin automates:
 - Saving results as GeoTIFF files with geospatial metadata.
 - Visualization of results on the QGIS map canvas.
 
----
-
 ## Features
 
 1. **Dialog Interface**
@@ -38,7 +36,6 @@ clearings_extractor_qgis/
 ├── clearings_extractor_dialog.py # Dialog class generated from UI file
 ├── clearings_extractor_dialog_base.ui # QGIS UI design file (Qt Designer)
 ├── extraction_algorithm.py       # Core algorithm for clearing detection
-├── clearings_qgis_model.model3   # Exported graphical model
 ├── resources.py                  # Compiled resources (e.g., icons)
 ├── help/                         # Documentation files
 │   └── index.rst                 # Main help file in reStructuredText
