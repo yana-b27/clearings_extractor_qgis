@@ -8,8 +8,6 @@ The plugin automates:
 - Saving results as GeoTIFF files with geospatial metadata.
 - Visualization of results on the QGIS map canvas.
 
----
-
 ## Features
 
 1. **Dialog Interface**
