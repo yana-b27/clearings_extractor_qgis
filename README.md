@@ -45,3 +45,15 @@ clearings_extractor_qgis/
 ├── pb_tool.cfg                   # Configuration for pb_tool (optional)
 └── plugin_upload.py              # Script for uploading to QGIS repository
 ```
+
+## Screenshots
+### Plugin Interface
+![image](https://github.com/user-attachments/assets/6b8be15c-9548-422f-a3c6-2ffaf6e77a8d)
+
+### Algorithm processed
+![image](https://github.com/user-attachments/assets/26685fb2-e451-458c-8f37-0a07b15e8ae3)
+
+### Algorithm failed
+![image](https://github.com/user-attachments/assets/0c34d9ff-458d-4e33-bbe5-4141fb7e4d14)
+
+
