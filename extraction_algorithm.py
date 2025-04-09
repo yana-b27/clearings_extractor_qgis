@@ -29,8 +29,8 @@ import rioxarray as rxr
 import spyndex
 from PIL import Image, ImageDraw
 from skimage.morphology import disk
-from skimage.morphology import binary_opening
-from skimage.feature import canny
+from skimage.morphology import binary_opening, binary_erosion
+from scipy.ndimage import gaussian_filter
 from skimage.transform import probabilistic_hough_line
 from sklearn.preprocessing import MinMaxScaler
 
@@ -283,21 +283,31 @@ class ClearingsExtractor:
         """
         Detects edges of bare lands in a given land classification map.
 
-        Parameters
+        Parameters:
         ----------
         pred_map : 2D numpy array
-            A 2D numpy array of size (height, width) containing predicted class labels
+            A 2D numpy array of size (height, width) containing predicted class labels.
 
-        Returns
+        Returns:
         -------
-        bare_lands_edges : 2D numpy array
-            A 2D numpy array of the same size as `pred_map` with the edges of 'Луга' (class №4) after applying Canny edge detection
+        model_bare_lands : 2D numpy array
+            A 2D numpy array of size (height, width) containing binary mask of bare lands (Class №4) from land classification map.
+        binary_smoothed_bare_lands : 2D numpy array
+            A 2D numpy array of size (height, width) containing binary mask of smoothed bare lands by gaussian filter.
+        edges : 2D numpy array
+            A 2D numpy array of size (height, width) containing binary mask of edges of bare lands.
         """
         model_bare_lands = pred_map == 4
         bare_lands_without_noise = binary_opening(model_bare_lands, disk(3))
-        bare_lands_edges = canny(bare_lands_without_noise, sigma=5)
+        smoothed_bare_lands = gaussian_filter(
+            bare_lands_without_noise.astype(float), sigma=5
+        )
+        binary_smoothed_bare_lands = smoothed_bare_lands > 0.5
 
-        return bare_lands_edges
+        eroded_bare_lands = binary_erosion(binary_smoothed_bare_lands, disk(1))
+        edges = binary_smoothed_bare_lands.astype(int) - eroded_bare_lands.astype(int)
+
+        return model_bare_lands, binary_smoothed_bare_lands, edges
 
     def find_lines(self, bare_lands_edges):
         """
@@ -314,14 +324,14 @@ class ClearingsExtractor:
             A 3D numpy array of size (height, width, 4) RGBA image containing the detected power line clearings as yellow lines of width 3
         """
         lines = probabilistic_hough_line(
-            image=bare_lands_edges, threshold=100, line_length=100, line_gap=50
+            image=bare_lands_edges, threshold=65, line_length=50, line_gap=50
         )
         power_line_clearings = Image.new(
             "RGBA", (bare_lands_edges.shape[1], bare_lands_edges.shape[0]), (0, 0, 0, 0)
         )
         draw = ImageDraw.Draw(power_line_clearings)
         for line_coordinates in lines:
-            draw.line(xy=line_coordinates, fill="yellow", width=3)
+            draw.line(xy=line_coordinates, fill="red", width=3)
         power_line_clearings = np.array(power_line_clearings)
 
         return power_line_clearings
@@ -341,7 +351,7 @@ class ClearingsExtractor:
             A 3D numpy array of size (height, width, 4) RGBA image containing the detected power line clearings as yellow lines of width 3
         """
 
-        bare_lands_edges = self.edge_detector(pred_map)
+        bare_lands_edges = self.edge_detector(pred_map)[-1]
         power_line_clearings = self.find_lines(bare_lands_edges)
 
         return power_line_clearings
