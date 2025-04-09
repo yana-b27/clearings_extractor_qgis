@@ -48,12 +48,13 @@ clearings_extractor_qgis/
 
 ## Screenshots
 ### Plugin Interface
-![image](https://github.com/user-attachments/assets/6b8be15c-9548-422f-a3c6-2ffaf6e77a8d)
+![image](https://github.com/user-attachments/assets/33903eb3-6e69-41e5-b2b2-c88636481620)
 
 ### Algorithm processed
-![image](https://github.com/user-attachments/assets/26685fb2-e451-458c-8f37-0a07b15e8ae3)
+![image](https://github.com/user-attachments/assets/4e32d76d-09df-439b-8f4b-952d2a84a92a)
 
 ### Algorithm failed
-![image](https://github.com/user-attachments/assets/0c34d9ff-458d-4e33-bbe5-4141fb7e4d14)
+![image](https://github.com/user-attachments/assets/d6e8f23e-0daf-4657-838e-d597af082a44)
+
 
 
