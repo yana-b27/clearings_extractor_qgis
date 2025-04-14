@@ -533,7 +533,7 @@ class ClearingsExtractorAlgorithm(QgsProcessingAlgorithm):
     
     def shortHelpString(self):
         return """
-The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the boundary detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
 
 Steps:
 1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.
@@ -663,7 +663,7 @@ class IterateClearingsExtractor(QgsProcessingAlgorithm):
     
     def shortHelpString(self):
         return """
-The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the boundary detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
 
 The algorithm receives two directories as input - one with summer images and one with winter images. The filenames of the images for the same area must match for the algorithm to successfully find the winter image that corresponds to the summer image for a given area. The algorithm processes each pair of images iteratively until all pairs in the two directories have been processed.
 

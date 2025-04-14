@@ -10,7 +10,7 @@ version=0.1
 author=Yana Bakhramkhan
 email=yana@qgis.com
 
-about=The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+about=The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the boundary detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
 
 tracker=https://github.com/yana-b27/clearings_extraction_algorithm/issues
 repository=https://github.com/yana-b27/clearings_extraction_algorithm
