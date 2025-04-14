@@ -46,15 +46,11 @@ clearings_extractor_qgis/
 └── plugin_upload.py              # Script for uploading to QGIS repository
 ```
 
-## Screenshots
-### Plugin Interface
-![image](https://github.com/user-attachments/assets/33903eb3-6e69-41e5-b2b2-c88636481620)
+## Video example
 
-### Algorithm processed
-![image](https://github.com/user-attachments/assets/4e32d76d-09df-439b-8f4b-952d2a84a92a)
+Сlick on the preview below to open the video in Google Drive:
 
-### Algorithm failed
-![image](https://github.com/user-attachments/assets/d6e8f23e-0daf-4657-838e-d597af082a44)
+[![Plugin example](./assets/preview.png)](https://drive.google.com/file/d/1oe7grTqy6GXvybtimDTYfABXdhE61Yso/view?usp=sharing)
 
 
 
