@@ -5,7 +5,7 @@
 The plugin automates:
 - Validation of input raster images (band count and dimensions).
 - Extraction of clearings using custom algorithms.
-- Optional calculation of the Weighted Difference Vegetation Index (WDRVI) for enhanced vegetation analysis.
+- Optional calculation of the Wide Dynamic Range Vegetation Index (WDRVI) for enhanced vegetation analysis.
 - Saving results as GeoTIFF files with geospatial metadata.
 - Visualization of results on the QGIS map canvas.
 
