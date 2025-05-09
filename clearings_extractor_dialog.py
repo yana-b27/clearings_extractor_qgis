@@ -21,14 +21,65 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt import uic
+
 from qgis.PyQt.QtWidgets import QDialog
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt import uic
 import os
 
-FORM_CLASS, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), 'clearings_extractor_dialog_base.ui'))
+FORM_CLASS, _ = uic.loadUiType(
+    os.path.join(os.path.dirname(__file__), "clearings_extractor_dialog_base.ui")
+)
+
 
 class ClearingsExtractorDialog(QDialog, FORM_CLASS):
+    """
+    A dialog class for the Clearings Extractor plugin in QGIS.
+    This dialog provides a user interface for selecting options related to
+    the extraction of clearings. It dynamically updates the state of the UI
+    based on user interactions with radio buttons.
+    Attributes:
+        logRegRadio (QRadioButton): A radio button for selecting the logistic regression option.
+        yoloRadio (QRadioButton): A radio button for selecting the YOLO option.
+        wdrviCheckBox (QCheckBox): A checkbox for enabling/disabling the WDRVI option.
+    Methods:
+        __init__(parent=None):
+            Initializes the dialog and sets up the UI components and signals.
+        update_ui_state():
+            Updates the state of the UI elements based on the selected radio button.
+            Enables or disables the WDRVI checkbox depending on whether the YOLO
+            option is selected.
+    """
+
     def __init__(self, parent=None):
+        """
+        Initializes the ClearingsExtractorDialog class.
+        This constructor sets up the user interface, initializes the UI state,
+        and connects radio button toggles to the `update_ui_state` method.
+        Args:
+            parent (QWidget, optional): The parent widget for this dialog. Defaults to None.
+        """
         super(ClearingsExtractorDialog, self).__init__(parent)
         self.setupUi(self)
+
+        self.update_ui_state()
+
+        self.logRegRadio.toggled.connect(self.update_ui_state)
+        self.yoloRadio.toggled.connect(self.update_ui_state)
+
+    def update_ui_state(self):
+        """
+        Updates the UI state based on the selected radio button.
+
+        This method checks whether the "YOLO" radio button is selected. If it is,
+        the WDRVI checkbox is enabled. If it is not selected, the WDRVI checkbox
+        is disabled and unchecked.
+
+        Behavior:
+        - Enables the WDRVI checkbox if the "YOLO" radio button is selected.
+        - Disables and unchecks the WDRVI checkbox if the "YOLO" radio button is not selected.
+        """
+        is_yolo = self.yoloRadio.isChecked()
+        self.wdrviCheckBox.setEnabled(is_yolo)
+        if not is_yolo:
+            self.wdrviCheckBox.setChecked(False)

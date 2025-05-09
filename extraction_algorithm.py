@@ -33,6 +33,9 @@ from skimage.morphology import binary_opening, binary_erosion
 from scipy.ndimage import gaussian_filter
 from skimage.transform import probabilistic_hough_line
 from sklearn.preprocessing import MinMaxScaler
+import rasterio
+import cv2
+from ultralytics import YOLO
 
 
 class ImageDataset:
@@ -239,7 +242,9 @@ class LandClassModel:
         """
         if model_path is None:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(script_dir, "logistic_regression.joblib")
+            model_path = os.path.join(
+                script_dir, "models", "logistic_regression.joblib"
+            )
 
         self.model = joblib.load(model_path)
 
@@ -387,3 +392,219 @@ def find_clearing_algorithm(summer_image_path, winter_image_path):
     power_line_clearings = clearing_extractor.extract(pred_map)
 
     return power_line_clearings
+
+
+def load_image(image_path):
+    """
+    Loads an image from the specified file path and processes it into an RGB format.
+    This function reads the last three bands of the image file, converts them into an RGB array,
+    and normalizes the pixel values to the range [0, 255] if necessary. It also extracts metadata
+    such as the transform, CRS (coordinate reference system), dimensions, and profile of the image.
+    Args:
+        image_path (str): The file path to the image to be loaded.
+    Returns:
+        tuple:
+            - image_rgb (numpy.ndarray): A 3D array representing the RGB image with pixel values in the range [0, 255].
+            - metadata (dict): A dictionary containing metadata about the image, including:
+                - 'transform' (affine.Affine): The affine transformation matrix for the image.
+                - 'crs' (rasterio.crs.CRS): The coordinate reference system of the image.
+                - 'height' (int): The height of the image in pixels.
+                - 'width' (int): The width of the image in pixels.
+                - 'profile' (dict): A copy of the image's profile containing additional metadata.
+    """
+    with rasterio.open(image_path) as src:
+        bands = src.read()[-3:]
+        transform = src.transform
+        crs = src.crs
+        height, width = src.height, src.width
+        profile = src.profile.copy()
+
+        image_rgb = np.transpose(bands, (1, 2, 0))
+
+        if image_rgb.dtype == np.uint16:
+            min_val = image_rgb.min()
+            max_val = image_rgb.max()
+            if max_val > min_val:
+                image_rgb = ((image_rgb - min_val) / (max_val - min_val) * 255).astype(
+                    np.uint8
+                )
+            else:
+                image_rgb = np.zeros_like(image_rgb, dtype=np.uint8)
+        elif image_rgb.dtype != np.uint8:
+            if image_rgb.max() <= 1:
+                image_rgb = (image_rgb * 255).astype(np.uint8)
+            else:
+                min_val = image_rgb.min()
+                max_val = image_rgb.max()
+                if max_val > min_val:
+                    image_rgb = (
+                        (image_rgb - min_val) / (max_val - min_val) * 255
+                    ).astype(np.uint8)
+                else:
+                    image_rgb = np.zeros_like(image_rgb, dtype=np.uint8)
+
+        metadata = {
+            "transform": transform,
+            "crs": crs,
+            "height": height,
+            "width": width,
+            "profile": profile,
+        }
+
+        return image_rgb, metadata
+
+
+def predict(image_rgb):
+    """
+    Perform object detection on the given RGB image using a pre-trained YOLO model.
+    Args:
+        image_rgb (numpy.ndarray): The input image in RGB format.
+    Returns:
+        list: A list of detection results, where each result contains information
+              about detected objects such as bounding boxes, confidence scores,
+              and class labels.
+    Raises:
+        FileNotFoundError: If the YOLO model file is not found at the expected path.
+    Notes:
+        - The YOLO model file is expected to be located in the 'models' directory
+          within the plugin's 'clearings_extractor' folder.
+        - The model uses a fixed image size of 384 and a confidence threshold of 0.446.
+        - Inference is performed on the CPU.
+    """
+
+    plugin_dir = os.path.dirname(os.path.dirname(__file__))
+    model_path = os.path.join(plugin_dir, "clearings_extractor", "models", "best.pt")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"YOLO model not found at {model_path}")
+
+    model = YOLO(model_path)
+    results = model.predict(
+        source=image_rgb,
+        imgsz=384,
+        conf=0.446,
+        save=False,
+        save_txt=False,
+        device="cpu",
+    )
+    return results
+
+
+def extract_clearings(results, metadata):
+    """
+    Extracts a binary mask representing clearings from the prediction results and metadata.
+    Args:
+        results (list): A list of prediction results, where each result contains:
+            - `masks.data` (torch.Tensor): The predicted masks for each object.
+            - `boxes.cls` (torch.Tensor): The predicted class labels for each object.
+        metadata (dict): A dictionary containing metadata about the input image, including:
+            - `height` (int): The height of the image.
+            - `width` (int): The width of the image.
+    Returns:
+        numpy.ndarray: A binary mask of shape (height, width) where pixels belonging to
+        clearings (class label 4) are set to 1, and all other pixels are set to 0.
+    """
+    height = metadata["height"]
+    width = metadata["width"]
+
+    result = results[0]
+    pred_masks = result.masks.data if result.masks is not None else []
+    pred_classes = result.boxes.cls.cpu().numpy() if result.boxes is not None else []
+
+    binary_mask = np.zeros((height, width), dtype=np.uint8)
+    if len(pred_masks) > 0 and len(pred_classes) > 0:
+        for mask, cls in zip(pred_masks, pred_classes):
+            if int(cls) == 4:
+                mask = mask.cpu().numpy()
+                if mask.shape != (height, width):
+                    mask = cv2.resize(
+                        mask, (width, height), interpolation=cv2.INTER_NEAREST
+                    )
+                binary_mask = np.logical_or(binary_mask, mask > 0).astype(np.uint8)
+
+    return binary_mask
+
+
+def save_mask(binary_mask, metadata, output_path):
+    """
+    Saves a binary mask as a 4-channel RGBA raster image.
+    Args:
+        binary_mask (numpy.ndarray): A 2D binary array where 1 represents the mask area
+            and 0 represents the background.
+        metadata (dict): A dictionary containing metadata about the raster.
+            Expected keys are:
+                - 'height' (int): The height of the raster.
+                - 'width' (int): The width of the raster.
+                - 'profile' (dict): The rasterio profile dictionary containing raster metadata.
+        output_path (str): The file path where the RGBA raster image will be saved.
+    Returns:
+        None: The function writes the RGBA raster to the specified output path.
+    """
+    height = metadata["height"]
+    width = metadata["width"]
+    profile = metadata["profile"]
+
+    rgba_mask = np.zeros((height, width, 4), dtype=np.uint8)
+    rgba_mask[binary_mask == 1, 0:3] = 255
+    rgba_mask[:, :, 3] = binary_mask * 255
+
+    profile.update({"count": 4, "dtype": "uint8", "nodata": None})
+
+    with rasterio.open(output_path, "w", **profile) as dst:
+        rgba_mask = np.transpose(rgba_mask, (2, 0, 1))
+        dst.write(rgba_mask)
+
+
+def predict_clearings_yolo(summer_path, output_path):
+    """
+    Predict clearings in a given image using a YOLO model, extract the clearings mask,
+    and save the resulting mask to the specified output path.
+    Args:
+        summer_path (str): The file path to the input image (e.g., a summer satellite image).
+        output_path (str): The file path where the resulting clearings mask will be saved.
+    Returns:
+        tuple: A tuple containing:
+            - image (numpy.ndarray): The loaded input image.
+            - clearings_mask (numpy.ndarray): The extracted clearings mask.
+    """
+    image, metadata = load_image(summer_path)
+    results = predict(image)
+    clearings_mask = extract_clearings(results, metadata)
+    save_mask(clearings_mask, metadata, output_path)
+
+    return image, clearings_mask
+
+
+def calculate_wdrvi(image, clearings_mask, metadata, output_path):
+    """
+    Calculate the Wide Dynamic Range Vegetation Index (WDRVI) for a given image and save the result.
+    The WDRVI is calculated using the formula:
+        WDRVI = (0.2 * NIR - Red) / (0.2 * NIR + Red)
+    where NIR is the near-infrared channel and Red is the red channel of the image.
+    Parameters:
+        image (numpy.ndarray): The input image as a 3D NumPy array (e.g., height x width x channels).
+                               The first channel is assumed to be the red channel, and the second channel is the NIR channel.
+        clearings_mask (numpy.ndarray): A 2D binary mask (same height and width as the image) where 1 indicates areas of interest
+                                        (clearings) and 0 indicates areas to be masked out.
+        metadata (dict): Metadata dictionary containing image profile information. The 'profile' key should contain
+                         a dictionary with rasterio-compatible metadata.
+        output_path (str): The file path where the resulting WDRVI raster will be saved.
+    Returns:
+        None: The function saves the WDRVI raster to the specified output path.
+    Notes:
+        - Areas where the sum of NIR and Red channels is zero are assigned NaN to avoid division by zero.
+        - The output raster is saved with a single band, a data type of float32, and NaN as the nodata value.
+    """
+
+    masked_image = image.copy()
+    masked_image[clearings_mask == 0] = 0
+
+    nir = masked_image[..., 1].astype(float)
+    red = masked_image[..., 0].astype(float)
+
+    wdrvi = np.where((nir + red) == 0, np.nan, (nir * 0.2 - red) / (nir * 0.2 + red))
+
+    profile = metadata["profile"]
+    profile.update({"count": 1, "dtype": "float32", "nodata": np.nan})
+
+    with rasterio.open(output_path, "w", **profile) as dst:
+        dst.write(wdrvi, 1)

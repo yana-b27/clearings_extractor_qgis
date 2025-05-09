@@ -17,9 +17,9 @@
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>10</y>
+     <y>50</y>
      <width>93</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -30,9 +30,9 @@
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>10</y>
+     <y>50</y>
      <width>231</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
   </widget>
@@ -40,9 +40,9 @@
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>50</y>
+     <y>80</y>
      <width>93</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -53,22 +53,22 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>130</y>
+     <y>140</y>
      <width>93</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
-    <string>Output Directory</string>
+    <string>Output directory</string>
    </property>
   </widget>
   <widget class="QLineEdit" name="outputDirLineEdit">
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>130</y>
+     <y>140</y>
      <width>231</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
   </widget>
@@ -76,9 +76,9 @@
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>10</y>
+     <y>50</y>
      <width>88</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -102,23 +102,29 @@
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Shell Dlg 2'; font-size:7.8pt; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:12pt; font-weight:600;&quot;&gt;Power line clearings extractor&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:12pt; font-weight:600; color:#666666;&quot;&gt;Power line clearings extractor&lt;/span&gt;&lt;/p&gt;
 &lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;br /&gt;&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt;&quot;&gt;The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or &amp;quot;grassland&amp;quot;, is extracted. The mask is then used to find lines using the Canny Boundary Detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.&lt;/span&gt;&lt;/p&gt;
-&lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;br /&gt;&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Steps:&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;2. Choose output directory for result.&lt;/p&gt;
-&lt;p align=&quot;justify&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;3. Click Run to process.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p align=&quot;justify&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;The plugin detects forest clearings under power lines from Sentinel-2 satellite images. It supports two algorithms:&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;1. Logistic Regression + Probabilistic Hough line: Uses a pre-trained logistic regression model to classify land cover, followed by edge detection and Hough transform to identify clearings. Requires both summer and winter images.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;2. YOLO Neural Network model: Uses a pre-trained YOLO model to directly segment clearings, requiring only a summer image. Optionally calculates the Wide Dynamic Range Vegetation Index (WDRVI).&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;Steps:&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;1. Select a summer Sentinel-2 image in .tif format (at least 5 channels: Blue, Green, Red, NIR, SWIR).&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;2. For Logistic Regression + Probabilistic Hough line, select a winter Sentinel-2 image in .tif format (at least 3 channels: Blue, Green, Red). Winter image must have the same dimensions as the summer image. For YOLO, winter image is not required.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;3. Choose output directory for results.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;4. Select the algorithm:&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;- Logistic Regression + Probabilistic Hough line: No additional input required.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;- YOLO Neural Network: Optionally enable WDRVI calculation. The YOLO clearings mask and WDRVI (if calculated) are automatically added to the map.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;5. Optionally enable adding source images to the map (summer image for YOLO, both summer and winter for Logistic Regression + Probabilistic Hough line).&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:8pt; color:#666666;&quot;&gt;6. Click Run to process.&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
   </widget>
   <widget class="QLabel" name="winterLabel">
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>50</y>
+     <y>80</y>
      <width>91</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -129,9 +135,9 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>210</x>
-     <y>50</y>
+     <y>80</y>
      <width>231</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
   </widget>
@@ -139,9 +145,9 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>130</y>
+     <y>140</y>
      <width>93</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
@@ -152,9 +158,9 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>170</y>
+     <y>200</y>
      <width>93</width>
-     <height>28</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -165,9 +171,9 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>170</y>
+     <y>200</y>
      <width>93</width>
-     <height>28</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -177,10 +183,10 @@ p, li { white-space: pre-wrap; }
   <widget class="QCheckBox" name="addImagesCheckBox">
    <property name="geometry">
     <rect>
-     <x>210</x>
+     <x>10</x>
      <y>170</y>
      <width>181</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -191,22 +197,22 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>90</y>
+     <y>111</y>
      <width>101</width>
-     <height>31</height>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">
-    <string>Output Filename</string>
+    <string>Output filename</string>
    </property>
   </widget>
   <widget class="QLineEdit" name="outputFileLineEdit">
    <property name="geometry">
     <rect>
      <x>110</x>
-     <y>90</y>
+     <y>110</y>
      <width>331</width>
-     <height>31</height>
+     <height>21</height>
     </rect>
    </property>
    <property name="text">
@@ -217,9 +223,9 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>240</y>
+     <y>250</y>
      <width>431</width>
-     <height>181</height>
+     <height>171</height>
     </rect>
    </property>
    <property name="readOnly">
@@ -230,13 +236,70 @@ p, li { white-space: pre-wrap; }
    <property name="geometry">
     <rect>
      <x>10</x>
-     <y>210</y>
+     <y>230</y>
      <width>111</width>
      <height>16</height>
     </rect>
    </property>
    <property name="text">
     <string>Processing log:</string>
+   </property>
+  </widget>
+  <widget class="QRadioButton" name="logRegRadio">
+   <property name="geometry">
+    <rect>
+     <x>140</x>
+     <y>10</y>
+     <width>171</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Logistic Regression 
++ Probabilistic Hough line</string>
+   </property>
+  </widget>
+  <widget class="QRadioButton" name="yoloRadio">
+   <property name="geometry">
+    <rect>
+     <x>320</x>
+     <y>10</y>
+     <width>111</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>YOLO Neural 
+network model</string>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+  </widget>
+  <widget class="QCheckBox" name="wdrviCheckBox">
+   <property name="geometry">
+    <rect>
+     <x>240</x>
+     <y>170</y>
+     <width>201</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Calculate WDRVI (YOLO only)</string>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label_2">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>10</y>
+     <width>131</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Choose the algorithm&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
   </widget>
  </widget>

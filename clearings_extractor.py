@@ -20,89 +20,148 @@
  *                                                                         *
  ***************************************************************************/
 """
+
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QIcon, QColor, QFont
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import (QgsProcessingAlgorithm, QgsProcessingParameterRasterLayer, 
-                       QgsProcessingParameterFolderDestination, QgsProcessingProvider,
-                       QgsProcessingParameterString, QgsProject, QgsRasterLayer)
+from qgis.core import (
+    QgsProcessingAlgorithm,
+    QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterFolderDestination,
+    QgsProcessingParameterString,
+    QgsProcessingParameterBoolean,
+    QgsProject,
+    QgsRasterLayer,
+    QgsColorRampShader,
+    QgsRasterShader,
+    QgsSingleBandPseudoColorRenderer,
+    QgsMultiBandColorRenderer,
+    QgsContrastEnhancement,
+    Qgis,
+    QgsRasterTransparency,
+    QgsProcessingProvider,
+)
 from qgis.utils import iface
+from qgis.core import QgsApplication
 import processing
-from .extraction_algorithm import find_clearing_algorithm
+import rasterio
+import numpy as np
+from .extraction_algorithm import (
+    find_clearing_algorithm,
+    predict_clearings_yolo,
+    calculate_wdrvi,
+)
 import os
+import time
 from osgeo import gdal
 from .resources import *
 
+
 class ClearingsExtractor:
     """
-    A QGIS plugin for extracting power line clearings from summer and winter images.
+    ClearingsExtractor is a QGIS plugin class designed to extract power line clearings
+    from satellite imagery using either YOLO-based object detection or a logistic regression + probabilistic Hough transform
+    approach. The plugin provides a graphical user interface (GUI) for user interaction
+    and integrates with QGIS to display results on the map.
     Attributes:
         iface (QgisInterface): The QGIS interface instance.
         plugin_dir (str): The directory where the plugin is located.
-        actions (list): A list of QAction objects for the plugin.
+        actions (list): A list of QAction objects added by the plugin.
         menu (str): The name of the plugin menu.
-        first_start (bool): A flag indicating if the plugin is starting for the first time.
+        first_start (bool): A flag indicating whether the plugin is starting for the first time.
+        provider (ClearingsExtractorProvider): A custom processing provider for the plugin.
     Methods:
         tr(message):
-            Translates a message using QCoreApplication.
-        add_action(icon_path, text, callback, enabled_flag=True, add_to_menu=True, add_to_toolbar=True, status_tip=None, whats_this=None, parent=None):
-            Adds an action to the plugin.
+            Translates a given message for internationalization.
+        add_action(icon_path, text, callback, enabled_flag=True, add_to_menu=True,
+                   add_to_toolbar=True, status_tip=None, whats_this=None, parent=None):
+            Adds an action to the plugin menu and/or toolbar.
         initGui():
-            Initializes the GUI for the plugin.
+            Initializes the plugin GUI and registers the processing provider.
         unload():
-            Unloads the plugin and removes its actions from the QGIS interface.
+            Cleans up the plugin by removing actions and unregistering the processing provider.
         select_file(line_edit, file_filter):
-            Opens a file dialog to select a file and sets the selected file path to the given QLineEdit.
+            Opens a file dialog to select a file and sets the selected path in the given QLineEdit.
         select_directory(line_edit):
-            Opens a directory dialog to select a directory and sets the selected directory path to the given QLineEdit.
+            Opens a directory dialog to select a folder and sets the selected path in the given QLineEdit.
         log_message(message):
-            Logs a message to the plugin's log text edit with appropriate formatting based on the message content.
+            Logs a message to the plugin's log text edit widget with appropriate formatting.
+        toggle_winter_input():
+            Toggles the availability of winter image input fields based on the selected model.
+        apply_wdrvi_color_ramp(layer):
+            Applies a custom color ramp to a WDRVI raster layer.
+        apply_clearings_color(layer):
+            Applies a red color to the clearings mask layer and makes the black background transparent.
         run():
-            Runs the plugin, initializing the dialog and connecting signals if it's the first start.
+            Displays the plugin dialog and initializes it if running for the first time.
         process_images():
-            Processes the summer and winter images to extract power line clearings and saves the results.
+            Processes the input images to extract power line clearings using the selected algorithm.
+            Handles file validation, algorithm execution, and result visualization.
         clear_inputs():
-            Clears the input fields and log messages in the plugin dialog.
+            Clears all input fields and resets the plugin dialog to its default state.
     """
+
     def __init__(self, iface):
         """
-        Initialize the ClearingsExtractor plugin.
+        Initializes the ClearingsExtractor plugin.
+
         Args:
-            iface (QgsInterface): An interface instance that will be passed to this class
-                                  which provides the hook by which you can manipulate the QGIS application at run time.
+            iface: An interface instance that provides the hook by which
+                   the plugin can manipulate the QGIS application.
+
+        Attributes:
+            iface: Stores the reference to the QGIS interface.
+            plugin_dir: The directory path where the plugin is located.
+            actions: A list to store plugin actions.
+            menu: The name of the plugin menu in the QGIS interface.
+            first_start: A flag to indicate if the plugin is starting for the first time.
+            provider: An instance of ClearingsExtractorProvider for handling provider-specific logic.
         """
-        
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
         self.actions = []
-        self.menu = self.tr(u'&Clearings Extractor')
+        self.menu = self.tr("&Clearings Extractor")
         self.first_start = None
         self.provider = ClearingsExtractorProvider()
 
     def tr(self, message):
         """
-        Translates a given message string to the current locale.
+        Translates the given message string into the current locale.
+
+        This method uses QCoreApplication's translation mechanism to provide
+        internationalization (i18n) support for the plugin.
 
         Args:
             message (str): The message string to be translated.
 
         Returns:
-            str: The translated message string.
+            str: The translated string in the current locale.
         """
-        return QCoreApplication.translate('ClearingsExtractor', message)
+        return QCoreApplication.translate("ClearingsExtractor", message)
 
-    def add_action(self, icon_path, text, callback, enabled_flag=True, add_to_menu=True, add_to_toolbar=True, status_tip=None, whats_this=None, parent=None):
+    def add_action(
+        self,
+        icon_path,
+        text,
+        callback,
+        enabled_flag=True,
+        add_to_menu=True,
+        add_to_toolbar=True,
+        status_tip=None,
+        whats_this=None,
+        parent=None,
+    ):
         """
-        Adds an action to the QGIS interface with specified properties.
+        Adds an action (button) to the QGIS interface, including toolbar and menu.
 
-        Args:
+        Parameters:
             icon_path (str): The file path to the icon for the action.
             text (str): The text label for the action.
             callback (callable): The function to be called when the action is triggered.
-            enabled_flag (bool, optional): If True, the action is enabled. Defaults to True.
-            add_to_menu (bool, optional): If True, the action is added to the plugin menu. Defaults to True.
-            add_to_toolbar (bool, optional): If True, the action is added to the toolbar. Defaults to True.
-            status_tip (str, optional): The status tip for the action. Defaults to None.
+            enabled_flag (bool, optional): Whether the action is enabled by default. Defaults to True.
+            add_to_menu (bool, optional): Whether to add the action to the plugin menu. Defaults to True.
+            add_to_toolbar (bool, optional): Whether to add the action to the toolbar. Defaults to True.
+            status_tip (str, optional): The status tip to display when hovering over the action. Defaults to None.
             whats_this (str, optional): The "What's This?" help text for the action. Defaults to None.
             parent (QObject, optional): The parent widget for the action. Defaults to None.
 
@@ -125,32 +184,46 @@ class ClearingsExtractor:
         return action
 
     def initGui(self):
+        """
+        Initializes the plugin's GUI by adding an action to the QGIS interface and
+        registering the processing provider.
+        This method performs the following tasks:
+        - Adds an action to the QGIS interface with the label 'Extract Clearings'.
+        - Sets up the callback function `self.run` to be executed when the action is triggered.
+        - Ensures the action is not added to the toolbar by default.
+        - Registers the plugin's processing provider with the QGIS processing registry.
+        Attributes:
+            first_start (bool): A flag indicating whether the plugin is being started for the first time.
+        """
         self.add_action(
             None,
-            text=self.tr(u'Extract Clearings'),
+            text=self.tr("Extract Clearings"),
             callback=self.run,
             parent=self.iface.mainWindow(),
-            add_to_toolbar=False
+            add_to_toolbar=False,
         )
         self.first_start = True
-        
-        from qgis.core import QgsApplication
+
         QgsApplication.processingRegistry().addProvider(self.provider)
 
     def unload(self):
         """
-        Unloads the plugin by removing its actions from the QGIS interface.
-        This method performs the following actions:
-        1. Iterates through the list of actions and removes each action from the plugin menu and toolbar.
+        Unloads the plugin by performing cleanup operations.
+        This method removes all actions associated with the plugin from the QGIS
+        interface, including the plugin menu and toolbar icons. Additionally, it
+        unregisters the custom processing provider from the QGIS processing registry.
+        Steps performed:
+        1. Iterates through the list of actions and removes each action from the
+           plugin menu and toolbar.
         2. Removes the custom processing provider from the QGIS processing registry.
         Note:
-            This method is typically called when the plugin is being disabled or uninstalled.
+            This method is typically called when the plugin is being deactivated
+            or uninstalled.
         """
         for action in self.actions:
-            self.iface.removePluginMenu(self.tr(u'&Clearings Extractor'), action)
+            self.iface.removePluginMenu(self.tr("&Clearings Extractor"), action)
             self.iface.removeToolBarIcon(action)
-            
-        from qgis.core import QgsApplication
+
         QgsApplication.processingRegistry().removeProvider(self.provider)
 
     def select_file(self, line_edit, file_filter):
@@ -158,31 +231,50 @@ class ClearingsExtractor:
         Opens a file dialog to select a file and sets the selected file path to the provided QLineEdit widget.
 
         Args:
-            line_edit (QLineEdit): The line edit widget where the selected file path will be set.
-            file_filter (str): The file filter for the file dialog (e.g., "Text Files (*.txt);;All Files (*)").
+            line_edit (QLineEdit): The line edit widget where the selected file path will be displayed.
+            file_filter (str): The file filter string to specify the types of files that can be selected
+                               (e.g., "Text Files (*.txt);;All Files (*)").
+
+        Returns:
+            None
         """
-        filename, _ = QFileDialog.getOpenFileName(self.dlg, "Select File", "", file_filter)
+        filename, _ = QFileDialog.getOpenFileName(
+            self.dlg, "Select File", "", file_filter
+        )
         if filename:
             line_edit.setText(filename)
 
     def select_directory(self, line_edit):
         """
-        Opens a dialog to select a directory and sets the selected directory path to the provided QLineEdit widget.
+        Opens a dialog for the user to select a directory and sets the selected
+        directory path to the provided QLineEdit widget.
 
         Args:
-            line_edit (QLineEdit): The QLineEdit widget where the selected directory path will be set.
+            line_edit (QLineEdit): The QLineEdit widget where the selected directory
+                                   path will be displayed.
+
+        Returns:
+            None
         """
-        directory = QFileDialog.getExistingDirectory(self.dlg, "Select Output Directory")
+        directory = QFileDialog.getExistingDirectory(
+            self.dlg, "Select Output Directory"
+        )
         if directory:
             line_edit.setText(directory)
-            
+
     def log_message(self, message):
         """
-        Logs a message to the logTextEdit widget with appropriate formatting based on the message content.
+        Logs a message to the logTextEdit widget with appropriate formatting based on the message type.
+        The method changes the text color and font weight of the logTextEdit widget depending on
+        whether the message contains "Error", "Success", or neither. After appending the message,
+        it resets the text color and font weight to default.
         Args:
-            message (str): The message to be logged. If the message contains "Error", it will be displayed in red and bold.
-                           If the message contains "Success", it will be displayed in green and bold. Otherwise, it will be
-                           displayed in black with normal font weight.
+            message (str): The message to be logged. It can contain keywords like "Error" or "Success"
+                           to determine the formatting.
+        Side Effects:
+            - Updates the text color and font weight of the logTextEdit widget.
+            - Appends the message to the logTextEdit widget.
+            - Processes pending GUI events to ensure immediate updates.
         """
         if "Error" in message:
             self.dlg.logTextEdit.setTextColor(QColor("red"))
@@ -193,37 +285,153 @@ class ClearingsExtractor:
         else:
             self.dlg.logTextEdit.setTextColor(QColor("black"))
             self.dlg.logTextEdit.setFontWeight(QFont.Normal)
-        
+
         self.dlg.logTextEdit.append(message)
         self.dlg.logTextEdit.setTextColor(QColor("black"))
         self.dlg.logTextEdit.setFontWeight(QFont.Normal)
         QCoreApplication.processEvents()
 
+    def toggle_winter_input(self):
+        """
+        Toggles the enabled state of winter input fields based on the state of the "YOLO" radio button.
+        If the "YOLO" radio button is checked, the winter input fields (line edit and browse button)
+        are disabled. Otherwise, they are enabled.
+        This method is typically used to control the availability of winter-related input fields
+        in the user interface based on the user's selection.
+        Returns:
+            None
+        """
+
+        is_yolo = self.dlg.yoloRadio.isChecked()
+        self.dlg.winterLineEdit.setEnabled(not is_yolo)
+        self.dlg.winterBrowseButton.setEnabled(not is_yolo)
+
+    def apply_wdrvi_color_ramp(self, layer):
+        """
+        Applies a WDRVI (Wide Dynamic Range Vegetation Index) color ramp to the given raster layer.
+        This method sets up a color ramp shader for visualizing WDRVI values in a raster layer.
+        The color ramp interpolates between three colors:
+        - Red for the minimum value (-1.0)
+        - Yellow for the midpoint value (0.0)
+        - Green for the maximum value (1.0)
+        Parameters:
+            layer (QgsRasterLayer): The raster layer to which the WDRVI color ramp will be applied.
+        Returns:
+            None
+        """
+
+        shader = QgsRasterShader()
+        color_ramp = QgsColorRampShader()
+        color_ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        color_ramp.setMinimumValue(-1.0)
+        color_ramp.setMaximumValue(1.0)
+        color_ramp_items = [
+            QgsColorRampShader.ColorRampItem(-1.0, QColor(255, 0, 0), "-1"),
+            QgsColorRampShader.ColorRampItem(0.0, QColor(255, 255, 0), "0"),
+            QgsColorRampShader.ColorRampItem(1.0, QColor(0, 255, 0), "1"),
+        ]
+        color_ramp.setColorRampItemList(color_ramp_items)
+        shader.setRasterShaderFunction(color_ramp)
+        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        layer.setRenderer(renderer)
+        layer.triggerRepaint()
+
+    def apply_clearings_color(self, layer):
+        """
+        Applies a custom color rendering and transparency configuration to a raster layer.
+        This method configures the RGB channels of the raster layer to highlight the red channel
+        while setting the green and blue channels to zero. It also sets the black background
+        (RGB: 0, 0, 0) to be fully transparent.
+        Args:
+            layer (QgsRasterLayer): The raster layer to which the color rendering and transparency
+                                    settings will be applied.
+        Behavior:
+            - If the layer is invalid or does not have at least three bands, the method returns without
+              making any changes.
+            - Configures the red channel to stretch between 0 and 255, while the green and blue channels
+              are fixed at 0.
+            - Sets the black background (RGB: 0, 0, 0) to be fully transparent.
+            - Triggers a repaint of the layer to apply the changes.
+        """
+
+        if not layer.isValid():
+            return
+        if layer.bandCount() >= 3:
+            renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
+            red_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            red_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            red_enhancement.setMinimumValue(0)
+            red_enhancement.setMaximumValue(255)
+            green_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            green_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            green_enhancement.setMinimumValue(0)
+            green_enhancement.setMaximumValue(0)
+            blue_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            blue_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            blue_enhancement.setMinimumValue(0)
+            blue_enhancement.setMaximumValue(0)
+            renderer.setRedContrastEnhancement(red_enhancement)
+            renderer.setGreenContrastEnhancement(green_enhancement)
+            renderer.setBlueContrastEnhancement(blue_enhancement)
+
+            transparency = QgsRasterTransparency()
+            transparent_pixel = QgsRasterTransparency.TransparentThreeValuePixel()
+            transparent_pixel.red = 0
+            transparent_pixel.green = 0
+            transparent_pixel.blue = 0
+            transparent_pixel.percentTransparent = 100.0
+            transparency_list = [transparent_pixel]
+            transparency.setTransparentThreeValuePixelList(transparency_list)
+
+            layer.setRenderer(renderer)
+            layer.renderer().setRasterTransparency(transparency)
+            layer.triggerRepaint()
+
     def run(self):
         """
-        Executes the main functionality of the Clearings Extractor plugin.
+        Executes the main logic for the plugin's user interface.
 
-        If this is the first time the plugin is being run, it initializes the dialog
-        and connects the UI elements to their respective functions:
+        This method initializes the dialog window and its components on the first run,
+        setting up the necessary connections for user interactions. It handles the following:
+
+        - Initializes the dialog window (`ClearingsExtractorDialog`) if it's the first start.
         - Sets the window title to "Clearings Extractor".
-        - Connects the summer and winter browse buttons to the file selection dialog.
-        - Connects the output directory button to the directory selection dialog.
-        - Connects the run button to the image processing function.
-        - Connects the clear button to the input clearing function.
-        - Clears the log text edit.
+        - Connects buttons to their respective functions:
+            - `summerBrowseButton`: Opens a file dialog to select a summer image file (*.tif).
+            - `winterBrowseButton`: Opens a file dialog to select a winter image file (*.tif).
+            - `outputDirButton`: Opens a directory selection dialog for the output directory.
+            - `runButton`: Starts the image processing workflow.
+            - `clearButton`: Clears all input fields in the dialog.
+        - Toggles the winter input field based on the state of the `yoloRadio` button.
+        - Clears the log text area in the dialog.
 
-        Shows the dialog and starts its event loop.
+        Finally, it displays the dialog window and starts its event loop.
         """
         if self.first_start:
             self.first_start = False
             from .clearings_extractor_dialog import ClearingsExtractorDialog
+
             self.dlg = ClearingsExtractorDialog()
             self.dlg.setWindowTitle("Clearings Extractor")
-            self.dlg.summerBrowseButton.clicked.connect(lambda: self.select_file(self.dlg.summerLineEdit, "Images (*.tif)"))
-            self.dlg.winterBrowseButton.clicked.connect(lambda: self.select_file(self.dlg.winterLineEdit, "Images (*.tif)"))
-            self.dlg.outputDirButton.clicked.connect(lambda: self.select_directory(self.dlg.outputDirLineEdit))
+            self.dlg.summerBrowseButton.clicked.connect(
+                lambda: self.select_file(self.dlg.summerLineEdit, "Images (*.tif)")
+            )
+            self.dlg.winterBrowseButton.clicked.connect(
+                lambda: self.select_file(self.dlg.winterLineEdit, "Images (*.tif)")
+            )
+            self.dlg.outputDirButton.clicked.connect(
+                lambda: self.select_directory(self.dlg.outputDirLineEdit)
+            )
             self.dlg.runButton.clicked.connect(self.process_images)
             self.dlg.clearButton.clicked.connect(self.clear_inputs)
+            self.dlg.yoloRadio.toggled.connect(self.toggle_winter_input)
+            self.toggle_winter_input()
             self.dlg.logTextEdit.clear()
 
         self.dlg.show()
@@ -231,476 +439,983 @@ class ClearingsExtractor:
 
     def process_images(self):
         """
-        Processes summer and winter images to extract power line clearings and saves the results.
+        Processes input images to extract power line clearings using either YOLO-based
+        detection or a Logistic Regression algorithm. The method performs various
+        checks on the input files, processes the images, and saves the results to
+        the specified output directory. Optionally, it computes the WDRVI index
+        and adds the resulting layers to the QGIS map.
         Steps:
-        1. Checks if input files (summer image, winter image, and output directory) are provided.
-        2. Opens the summer and winter images using GDAL.
-        3. Validates the number of bands in the images (summer image must have at least 5 bands, winter image must have at least 3 bands).
-        4. Ensures that the summer and winter images have the same pixel dimensions.
-        5. Runs the clearing extraction algorithm on the images.
-        6. Exports the results to a specified output directory as a TIFF file.
-        7. Optionally adds the source images and the results to the QGIS map.
-        Logs messages at each step to provide feedback on the process.
+        1. Validates input paths and parameters.
+        2. Opens and validates the summer and winter images.
+        3. Runs the selected algorithm (YOLO or Logistic Regression) to extract clearings.
+        4. Saves the results as a GeoTIFF file.
+        5. Optionally computes the WDRVI index if YOLO is used.
+        6. Adds the resulting layers to the QGIS map if specified.
+        Parameters:
+            None (uses attributes from the dialog interface `self.dlg`).
         Raises:
-            Exception: If the clearing extraction algorithm fails.
+            Exception: If any error occurs during the processing or algorithm execution.
+        Notes:
+            - The summer image must have at least 5 bands.
+            - The winter image (if used) must have at least 3 bands and match the
+              dimensions of the summer image.
+            - The output file is saved as a GeoTIFF in the specified output directory.
+            - If the "Add Images" option is checked, the source and result layers
+              are added to the QGIS map.
+            - If WDRVI is computed, it is saved as a separate GeoTIFF file and
+              added to the map with a custom color ramp.
         """
         summer_path = self.dlg.summerLineEdit.text()
         winter_path = self.dlg.winterLineEdit.text()
         output_dir = self.dlg.outputDirLineEdit.text()
+        use_yolo = self.dlg.yoloRadio.isChecked()
+        compute_wdrvi = self.dlg.wdrviCheckBox.isChecked() and use_yolo
 
         self.log_message("Checking input files...")
-        if not (summer_path and winter_path and output_dir):
-            self.log_message("Error: Please select summer image, winter image, and output directory")
+        if not summer_path or not output_dir:
+            self.log_message("Error: Please select summer image and output directory")
+            return
+        if not use_yolo and not winter_path:
+            self.log_message("Error: Winter image is required for Logistic Regression")
             return
 
         self.log_message("Opening images...")
         summer_ds = gdal.Open(summer_path)
-        winter_ds = gdal.Open(winter_path)
-        
-        if summer_ds is None or winter_ds is None:
-            self.log_message("Error: Failed to open one or both tiff images")
+        if summer_ds is None:
+            self.log_message("Error: Failed to open summer tiff image")
             return
 
         self.log_message("Checking image bands...")
         if summer_ds.RasterCount < 5:
             self.log_message("Error: Summer image must have at least 5 bands")
             summer_ds = None
-            winter_ds = None
-            return
-        if winter_ds.RasterCount < 3:
-            self.log_message("Error: Winter image must have at least 3 bands")
-            summer_ds = None
-            winter_ds = None
             return
 
-        self.log_message("Checking image dimensions...")
-        summer_size = (summer_ds.RasterXSize, summer_ds.RasterYSize)
-        winter_size = (winter_ds.RasterXSize, winter_ds.RasterYSize)
-        if summer_size != winter_size:
-            self.log_message("Error: Summer and winter images must have the same pixel dimensions")
-            summer_ds = None
+        if not use_yolo:
+            winter_ds = gdal.Open(winter_path)
+            if winter_ds is None:
+                self.log_message("Error: Failed to open winter tiff image")
+                summer_ds = None
+                return
+            if winter_ds.RasterCount < 3:
+                self.log_message("Error: Winter image must have at least 3 bands")
+                summer_ds = None
+                winter_ds = None
+                return
+            self.log_message("Checking image dimensions...")
+            summer_size = (summer_ds.RasterXSize, summer_ds.RasterYSize)
+            winter_size = (winter_ds.RasterXSize, winter_ds.RasterYSize)
+            if summer_size != winter_size:
+                self.log_message(
+                    "Error: Summer and winter images must have the same pixel dimensions"
+                )
+                summer_ds = None
+                winter_ds = None
+                return
             winter_ds = None
-            return
 
         summer_ds = None
-        winter_ds = None
 
         self.log_message("Process begun...")
 
         self.log_message("Running algorithm...")
         try:
-            power_line_clearings = find_clearing_algorithm(summer_path, winter_path)
+            output_filename = (
+                self.dlg.outputFileLineEdit.text().strip() or "power_line_clearings.tif"
+            )
+            if not output_filename.endswith(".tif"):
+                output_filename += ".tif"
+            temp_tiff = os.path.join(output_dir, output_filename)
+
+            if use_yolo:
+                image, clearings_mask = predict_clearings_yolo(summer_path, temp_tiff)
+                if compute_wdrvi:
+                    wdrvi_filename = output_filename.replace(".tif", "_wdrvi.tif")
+                    wdrvi_path = os.path.join(output_dir, wdrvi_filename)
+                    with rasterio.open(summer_path) as src:
+                        metadata = {
+                            "transform": src.transform,
+                            "crs": src.crs,
+                            "height": src.height,
+                            "width": src.width,
+                            "profile": src.profile.copy(),
+                        }
+                    calculate_wdrvi(image, clearings_mask, metadata, wdrvi_path)
+                    self.log_message(f"WDRVI saved to {wdrvi_path}")
+            else:
+                power_line_clearings = find_clearing_algorithm(summer_path, winter_path)
+
+                if os.path.exists(temp_tiff):
+                    try:
+                        os.remove(temp_tiff)
+                    except PermissionError:
+                        self.log_message(
+                            f"Error: Could not delete {temp_tiff}. File may be locked."
+                        )
+                        return
+
+                driver = gdal.GetDriverByName("GTiff")
+                out_ds = driver.Create(
+                    temp_tiff,
+                    power_line_clearings.shape[1],
+                    power_line_clearings.shape[0],
+                    4,
+                    gdal.GDT_Byte,
+                )
+                if out_ds is None:
+                    self.log_message(
+                        f"Error: Failed to create {temp_tiff}. Check permissions or disk space."
+                    )
+                    return
+
+                for i in range(4):
+                    out_ds.GetRasterBand(i + 1).WriteArray(
+                        power_line_clearings[:, :, i]
+                    )
+
+                src_ds = gdal.Open(summer_path)
+                out_ds.SetGeoTransform(src_ds.GetGeoTransform())
+                out_ds.SetProjection(src_ds.GetProjection())
+                out_ds.FlushCache()
+                out_ds = None
+                src_ds = None
+
         except Exception as e:
             self.log_message(f"Error: Algorithm failed: {str(e)}")
             return
 
         self.log_message("Algorithm finished...")
+        self.log_message(f"Results saved to {temp_tiff}")
 
-        self.log_message("Exporting results...")
-        output_filename = self.dlg.outputFileLineEdit.text().strip() or "power_line_clearings.tif"
-        if not output_filename.endswith(".tif"):
-            output_filename += ".tif"
-        temp_tiff = os.path.join(output_dir, output_filename)
-
-        self.log_message(f"Results will be saved to {temp_tiff}")
-        existing_layer = QgsProject.instance().mapLayersByName("power_line_clearings")
-        if existing_layer:
-            QgsProject.instance().removeMapLayer(existing_layer[0].id())
-            QCoreApplication.processEvents() 
-
-        if os.path.exists(temp_tiff):
-            try:
-                os.remove(temp_tiff)
-            except PermissionError:
-                self.log_message(f"Error: Could not delete {temp_tiff}. File may be locked by another process.")
-                return
-
-        driver = gdal.GetDriverByName("GTiff")
-        out_ds = driver.Create(temp_tiff, power_line_clearings.shape[1], power_line_clearings.shape[0], 4, gdal.GDT_Byte)
-        if out_ds is None:
-            self.log_message(f"Error: Failed to create {temp_tiff}. Check permissions or disk space.")
-            return
-        
-        for i in range(4):
-            out_ds.GetRasterBand(i + 1).WriteArray(power_line_clearings[:, :, i])
-        
-        src_ds = gdal.Open(summer_path)
-        out_ds.SetGeoTransform(src_ds.GetGeoTransform())
-        out_ds.SetProjection(src_ds.GetProjection())
-        out_ds.FlushCache()
-        out_ds = None
-        src_ds = None
-
-        self.log_message("Saving completed...")
-        
         if self.dlg.addImagesCheckBox.isChecked():
             self.log_message("Adding source images on the map...")
-            winter_layer = QgsRasterLayer(winter_path, "winter_image")
             summer_layer = QgsRasterLayer(summer_path, "summer_image")
-            if summer_layer.isValid() and winter_layer.isValid():
-                QgsProject.instance().addMapLayer(winter_layer)
+            if summer_layer.isValid():
                 QgsProject.instance().addMapLayer(summer_layer)
             else:
-                self.log_message("Error: Failed to load one or both source images")
-                
+                self.log_message("Error: Failed to load summer image")
+            if not use_yolo:
+                winter_layer = QgsRasterLayer(winter_path, "winter_image")
+                if winter_layer.isValid():
+                    QgsProject.instance().addMapLayer(winter_layer)
+                else:
+                    self.log_message("Error: Failed to load winter image")
+
         self.log_message("Adding results on the map...")
         clearings_layer = QgsRasterLayer(temp_tiff, "power_line_clearings")
         if not clearings_layer.isValid():
             self.log_message("Error: Failed to load the clearings layer")
             return
+        if use_yolo:
+            self.apply_clearings_color(clearings_layer)
         QgsProject.instance().addMapLayer(clearings_layer)
 
+        if compute_wdrvi and use_yolo:
+            self.log_message("Adding WDRVI layer on the map...")
+            wdrvi_layer = QgsRasterLayer(wdrvi_path, "wdrvi")
+            if wdrvi_layer.isValid():
+                self.apply_wdrvi_color_ramp(wdrvi_layer)
+                QgsProject.instance().addMapLayer(wdrvi_layer)
+                self.log_message("WDRVI layer added to map with custom color ramp")
+            else:
+                self.log_message("Error: Failed to load WDRVI layer")
+
         self.log_message("Process completed")
-        self.log_message(f"Success: Power line clearings extracted and saved to {temp_tiff}")
-        
+        self.log_message(
+            f"Success: Power line clearings extracted and saved to {temp_tiff}"
+        )
+
     def clear_inputs(self):
         """
-        Clears the input fields in the dialog.
-
-        This method clears the text in the summerLineEdit, winterLineEdit, 
-        outputDirLineEdit, and logTextEdit fields of the dialog. It also logs 
-        a message indicating that the inputs have been cleared and prompts 
-        the user to click Run to process.
+        Clears all input fields and resets the GUI elements to their default state.
+        This method performs the following actions:
+        - Clears the text in the summer, winter, output directory, and output file input fields.
+        - Resets the radio button for logistic regression to checked.
+        - Unchecks the WDRVI and Add Images checkboxes.
+        - Clears the log text edit field.
+        - Logs a message indicating that the inputs have been cleared and the user can proceed to run the process.
         """
+
         self.dlg.summerLineEdit.clear()
         self.dlg.winterLineEdit.clear()
         self.dlg.outputDirLineEdit.clear()
+        self.dlg.outputFileLineEdit.clear()
+        self.dlg.logRegRadio.setChecked(True)
+        self.dlg.wdrviCheckBox.setChecked(False)
+        self.dlg.addImagesCheckBox.setChecked(False)
         self.dlg.logTextEdit.clear()
         self.log_message("Inputs cleared. Click Run to process")
-        
+
+
 class ClearingsExtractorAlgorithm(QgsProcessingAlgorithm):
     """
-    ClearingsExtractorAlgorithm is a QGIS Processing Algorithm that extracts clearings from a pair of summer and winter images.
+    ClearingsExtractorAlgorithm is a QGIS Processing Algorithm that detects forest clearings under power lines
+    using Sentinel-2 satellite images. The algorithm supports two methods: Logistic Regression and YOLO Neural Network.
     Attributes:
-        SUMMER_IMAGE (str): Parameter name for the summer image raster layer.
-        WINTER_IMAGE (str): Parameter name for the winter image raster layer.
-        OUTPUT_DIR (str): Parameter name for the output directory.
+        SUMMER_IMAGE (str): Parameter key for the summer image input.
+        WINTER_IMAGE (str): Parameter key for the winter image input (optional for YOLO).
+        OUTPUT_DIR (str): Parameter key for the output directory.
+        USE_YOLO (str): Parameter key to select YOLO Neural Network as the processing method.
+        CALCULATE_WDRVI (str): Parameter key to enable WDRVI calculation (YOLO only).
+        ADD_SOURCE_IMAGES (str): Parameter key to add source images to the map.
     Methods:
         initAlgorithm(config=None):
-            Initializes the algorithm with the required parameters.
+            Initializes the algorithm parameters, including input raster layers, output directory,
+            and processing options.
+        apply_wdrvi_color_ramp(layer):
+            Applies a custom color ramp to a WDRVI layer, with values ranging from -1 (red) to 1 (green).
+        apply_clearings_color(layer):
+            Applies a red color to the YOLO-generated clearings mask and makes the black background transparent.
         processAlgorithm(parameters, context, feedback):
-            Processes the input summer and winter images to extract clearings and saves the result to the specified output directory.
+            Processes the input images using the selected method (YOLO or Logistic Regression) and generates
+            the output raster files. Adds the results and optionally the source images to the QGIS map.
         name():
-            Returns the unique algorithm name.
+            Returns the algorithm's unique name.
         displayName():
-            Returns the display name of the algorithm.
+            Returns the algorithm's display name.
         group():
-            Returns the group name of the algorithm.
+            Returns the group name under which the algorithm is categorized.
         groupId():
-            Returns the unique group ID of the algorithm.
+            Returns the unique group ID for the algorithm.
         createInstance():
             Creates and returns a new instance of the algorithm.
+        shortHelpString():
+            Returns a short help string describing the algorithm and its usage.
+    Usage:
+        The plugin detects forest clearings under power lines on Sentinel-2 satellite images. It supports two methods:
+        - Logistic Regression: Requires both summer and winter images. Produces a binary mask of low vegetation
+          and detects clearings using boundary detection and Hough Transform.
+        - YOLO Neural Network: Requires only the summer image. Directly segments clearings and optionally calculates
+          the Weighted Difference Vegetation Index (WDRVI).
+        2. For Logistic Regression, select a winter Sentinel-2 image in .tif format (at least 3 channels: Blue, Green, Red).
+           Winter image must have the same dimensions as the summer image. For YOLO, winter image is not required.
+        3. Choose an output directory for results.
+           - YOLO Neural Network: Optionally enable WDRVI calculation.
+        5. Optionally enable adding source images to the map.
     """
-    SUMMER_IMAGE = 'SUMMER_IMAGE'
-    WINTER_IMAGE = 'WINTER_IMAGE'
-    OUTPUT_DIR = 'OUTPUT_DIR'
+
+    SUMMER_IMAGE = "SUMMER_IMAGE"
+    WINTER_IMAGE = "WINTER_IMAGE"
+    OUTPUT_DIR = "OUTPUT_DIR"
+    USE_YOLO = "USE_YOLO"
+    CALCULATE_WDRVI = "CALCULATE_WDRVI"
+    ADD_SOURCE_IMAGES = "ADD_SOURCE_IMAGES"
 
     def initAlgorithm(self, config=None):
         """
-        Initializes the algorithm with the given configuration.
+        Initializes the algorithm by defining its input parameters.
 
-        This method adds the required parameters for the algorithm:
-        - A raster layer parameter for the summer image.
-        - A raster layer parameter for the winter image.
-        - A folder destination parameter for the output directory.
+        Parameters:
+            config (dict, optional): Configuration dictionary for the algorithm.
 
-        Args:
-            config (dict, optional): Configuration dictionary. Defaults to None.
+        Parameters Defined:
+            - SUMMER_IMAGE (QgsProcessingParameterRasterLayer):
+              The raster layer representing the summer image.
+            - WINTER_IMAGE (QgsProcessingParameterRasterLayer, optional):
+              The raster layer representing the winter image. This parameter is optional.
+            - OUTPUT_DIR (QgsProcessingParameterFolderDestination):
+              The folder destination where the output will be saved.
+            - USE_YOLO (QgsProcessingParameterBoolean):
+              A boolean parameter to specify whether to use the YOLO neural network. Default is False.
+            - CALCULATE_WDRVI (QgsProcessingParameterBoolean):
+              A boolean parameter to specify whether to calculate the WDRVI (Weighted Difference Vegetation Index).
+              This is applicable only when YOLO is used. Default is False.
+            - ADD_SOURCE_IMAGES (QgsProcessingParameterBoolean):
+              A boolean parameter to specify whether to add the source images to the map. Default is True.
         """
-        self.addParameter(QgsProcessingParameterRasterLayer(self.SUMMER_IMAGE, 'Summer Image'))
-        self.addParameter(QgsProcessingParameterRasterLayer(self.WINTER_IMAGE, 'Winter Image'))
-        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, 'Output Directory'))
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(self.SUMMER_IMAGE, "Summer Image")
+        )
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.WINTER_IMAGE, "Winter Image", optional=True
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, "Output Directory")
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.USE_YOLO, "Use YOLO Neural Network", defaultValue=False
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.CALCULATE_WDRVI, "Calculate WDRVI (YOLO only)", defaultValue=False
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.ADD_SOURCE_IMAGES, "Add Source Images to Map", defaultValue=True
+            )
+        )
+
+    def apply_wdrvi_color_ramp(self, layer):
+        """
+        Applies a WDRVI (Wide Dynamic Range Vegetation Index) color ramp to the given raster layer.
+        This method sets up a color ramp shader for visualizing WDRVI values on a raster layer.
+        The color ramp interpolates between three colors:
+        - Red for the minimum value (-1.0)
+        - Yellow for the midpoint value (0.0)
+        - Green for the maximum value (1.0)
+        Parameters:
+            layer (QgsRasterLayer): The raster layer to which the WDRVI color ramp will be applied.
+        Returns:
+            None
+        """
+
+        shader = QgsRasterShader()
+        color_ramp = QgsColorRampShader()
+        color_ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        color_ramp.setMinimumValue(-1.0)
+        color_ramp.setMaximumValue(1.0)
+        color_ramp_items = [
+            QgsColorRampShader.ColorRampItem(-1.0, QColor(255, 0, 0), "-1"),
+            QgsColorRampShader.ColorRampItem(0.0, QColor(255, 255, 0), "0"),
+            QgsColorRampShader.ColorRampItem(1.0, QColor(0, 255, 0), "1"),
+        ]
+        color_ramp.setColorRampItemList(color_ramp_items)
+        shader.setRasterShaderFunction(color_ramp)
+        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        layer.setRenderer(renderer)
+        layer.triggerRepaint()
+
+    def apply_clearings_color(self, layer):
+        """
+        Applies a custom color rendering to a raster layer to highlight clearings.
+        This method configures the RGB channels of the raster layer to emphasize the red channel
+        while setting the green and blue channels to zero. It also sets the black background
+        (RGB: 0, 0, 0) to be fully transparent.
+        Args:
+            layer (QgsRasterLayer): The raster layer to which the custom color rendering will be applied.
+        Returns:
+            None: The function modifies the layer in place. If the layer is invalid, the function exits early.
+        Notes:
+            - The method assumes the raster layer has at least three bands (RGB).
+            - The red channel is stretched to a minimum and maximum value of 0 and 255, respectively.
+            - The green and blue channels are set to a constant value of 0.
+            - Transparency is applied to make black pixels (0, 0, 0) fully transparent.
+        """
+
+        if not layer.isValid():
+            return
+        if layer.bandCount() >= 3:
+            renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
+            red_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            red_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            red_enhancement.setMinimumValue(0)
+            red_enhancement.setMaximumValue(255)
+            green_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            green_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            green_enhancement.setMinimumValue(0)
+            green_enhancement.setMaximumValue(0)
+            blue_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            blue_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            blue_enhancement.setMinimumValue(0)
+            blue_enhancement.setMaximumValue(0)
+            renderer.setRedContrastEnhancement(red_enhancement)
+            renderer.setGreenContrastEnhancement(green_enhancement)
+            renderer.setBlueContrastEnhancement(blue_enhancement)
+
+            transparency = QgsRasterTransparency()
+            transparent_pixel = QgsRasterTransparency.TransparentThreeValuePixel()
+            transparent_pixel.red = 0
+            transparent_pixel.green = 0
+            transparent_pixel.blue = 0
+            transparent_pixel.percentTransparent = 100.0
+            transparency_list = [transparent_pixel]
+            transparency.setTransparentThreeValuePixelList(transparency_list)
+
+            layer.setRenderer(renderer)
+            layer.renderer().setRasterTransparency(transparency)
+            layer.triggerRepaint()
 
     def processAlgorithm(self, parameters, context, feedback):
         """
-        Processes the algorithm to detect power line clearings from summer and winter images.
+        Executes the main processing algorithm for extracting clearings from raster images.
         Parameters:
-        - parameters: dict
-            Dictionary of parameters passed to the algorithm.
-        - context: QgsProcessingContext
-            Context in which the algorithm is run.
-        - feedback: QgsProcessingFeedback
-            Feedback object to report progress and information.
+            parameters (dict): A dictionary containing the input parameters for the algorithm.
+                - SUMMER_IMAGE: The summer raster image layer.
+                - WINTER_IMAGE: The winter raster image layer (optional, required for Logistic Regression).
+                - OUTPUT_DIR: The directory where the output files will be saved.
+                - USE_YOLO: Boolean flag to determine whether to use YOLO-based clearing detection.
+                - CALCULATE_WDRVI: Boolean flag to calculate and save the WDRVI index (only applicable for YOLO).
+                - ADD_SOURCE_IMAGES: Boolean flag to add the source images to the QGIS map.
+            context (QgsProcessingContext): The processing context.
+            feedback (QgsProcessingFeedback): The feedback object for logging messages and progress.
         Returns:
-        - dict
-            Dictionary containing the output file path with key 'OUTPUT'.
-        The function performs the following steps:
-        1. Retrieves the summer and winter raster layers and output directory from parameters.
-        2. Checks if the images have the required number of bands and matching dimensions.
-        3. Runs the clearing detection algorithm.
-        4. Saves the resulting clearings to a GeoTIFF file.
-        5. Adds the resulting layer to the QGIS project.
+            dict: A dictionary containing the output file paths.
+                - OUTPUT: The file path of the generated clearings raster.
         Raises:
-        - Exception: If the clearing detection algorithm fails.
+            Exception: If any unexpected error occurs during the algorithm execution.
+        Notes:
+            - The algorithm supports two modes: YOLO-based detection and Logistic Regression.
+            - For Logistic Regression, both summer and winter images are required, and their dimensions must match.
+            - The summer image must have at least 5 bands, and the winter image must have at least 3 bands.
+            - The algorithm can optionally calculate the WDRVI index and add source images to the QGIS map.
+            - The output raster and optional WDRVI layer are added to the QGIS map if valid.
         """
-        summer_layer = self.parameterAsRasterLayer(parameters, self.SUMMER_IMAGE, context)
-        winter_layer = self.parameterAsRasterLayer(parameters, self.WINTER_IMAGE, context)
+        summer_layer = self.parameterAsRasterLayer(
+            parameters, self.SUMMER_IMAGE, context
+        )
+        winter_layer = self.parameterAsRasterLayer(
+            parameters, self.WINTER_IMAGE, context
+        )
         output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
+        use_yolo = self.parameterAsBool(parameters, self.USE_YOLO, context)
+        compute_wdrvi = self.parameterAsBool(parameters, self.CALCULATE_WDRVI, context)
+        add_source_images = self.parameterAsBool(
+            parameters, self.ADD_SOURCE_IMAGES, context
+        )
 
         summer_path = summer_layer.source()
-        winter_path = winter_layer.source()
+        winter_path = winter_layer.source() if winter_layer else None
 
-        feedback.pushInfo(f"Processing pair: {os.path.basename(summer_path)} (summer image) and {os.path.basename(winter_path)} (winter image)")
+        feedback.pushInfo(f"Processing summer image: {os.path.basename(summer_path)}")
+        if not use_yolo and not winter_path:
+            feedback.pushInfo(
+                "[ERROR] Winter image is required for Logistic Regression"
+            )
+            return {}
 
         summer_ds = gdal.Open(summer_path)
-        winter_ds = gdal.Open(winter_path)
-        if summer_ds is None or winter_ds is None:
-            feedback.pushInfo(f'[ERROR] Failed to open files')
+        if summer_ds is None:
+            feedback.pushInfo("[ERROR] Failed to open summer image")
             return {}
-        feedback.pushInfo(f"Checking image bands...")
+        feedback.pushInfo("Checking summer image bands...")
         if summer_ds.RasterCount < 5:
-            feedback.pushInfo(f'[ERROR] Summer image must have at least 5 bands')
+            feedback.pushInfo("[ERROR] Summer image must have at least 5 bands")
+            summer_ds = None
             return {}
-        if winter_ds.RasterCount < 3:
-            feedback.pushInfo(f'[ERROR] Winter image must have at least 3 bands')
-            return {}
-        feedback.pushInfo(f"Checking image dimensions...")
-        if (summer_ds.RasterXSize, summer_ds.RasterYSize) != (winter_ds.RasterXSize, winter_ds.RasterYSize):
-            feedback.pushInfo(f'[ERROR] Dimension mismatch between images')
-            return {}
-        summer_ds = None
-        winter_ds = None
 
-        feedback.pushInfo(f'Running algorithm...')
-        try:
-            power_line_clearings = find_clearing_algorithm(summer_path, winter_path)
-        except Exception as e:
-            feedback.pushInfo(f'[ERROR] Algorithm failed: {str(e)}')
-            return {}
-        feedback.pushInfo(f'Algorithm finished...')
-        
-        output_filename = f"{os.path.splitext(os.path.basename(summer_path))[0]}_clearings.tif"
-        temp_tiff = os.path.join(output_dir, output_filename)
-        feedback.pushInfo(f'Results will be saved to {temp_tiff}')
-
-        if os.path.exists(temp_tiff):
-            try:
-                os.remove(temp_tiff)
-                feedback.pushInfo(f'Removed existing file: {temp_tiff}')
-            except PermissionError:
-                feedback.pushInfo(f'[ERROR] Could not delete {temp_tiff}. File may be locked.')
+        if not use_yolo:
+            winter_ds = gdal.Open(winter_path)
+            if winter_ds is None:
+                feedback.pushInfo("[ERROR] Failed to open winter image")
+                summer_ds = None
                 return {}
+            feedback.pushInfo("Checking winter image bands...")
+            if winter_ds.RasterCount < 3:
+                feedback.pushInfo("[ERROR] Winter image must have at least 3 bands")
+                summer_ds = None
+                winter_ds = None
+                return {}
+            feedback.pushInfo("Checking image dimensions...")
+            if (summer_ds.RasterXSize, summer_ds.RasterYSize) != (
+                winter_ds.RasterXSize,
+                winter_ds.RasterYSize,
+            ):
+                feedback.pushInfo("[ERROR] Dimension mismatch between images")
+                summer_ds = None
+                winter_ds = None
+                return {}
+            winter_ds = None
 
-        feedback.pushInfo(f'Exporting results...')
-        driver = gdal.GetDriverByName("GTiff")
-        out_ds = driver.Create(temp_tiff, power_line_clearings.shape[1], power_line_clearings.shape[0], 4, gdal.GDT_Byte)
-        if out_ds is None:
-            feedback.pushInfo(f'[ERROR] Failed to create {temp_tiff}')
+        summer_ds = None
+
+        feedback.pushInfo(
+            f"Running {'YOLO' if use_yolo else 'Logistic Regression'} algorithm..."
+        )
+        try:
+            output_filename = (
+                f"{os.path.splitext(os.path.basename(summer_path))[0]}_clearings.tif"
+            )
+            temp_tiff = os.path.join(output_dir, output_filename)
+
+            if use_yolo:
+                image, clearings_mask = predict_clearings_yolo(summer_path, temp_tiff)
+                if compute_wdrvi:
+                    wdrvi_filename = output_filename.replace(".tif", "_wdrvi.tif")
+                    wdrvi_path = os.path.join(output_dir, wdrvi_filename)
+                    with rasterio.open(summer_path) as src:
+                        metadata = {
+                            "transform": src.transform,
+                            "crs": src.crs,
+                            "height": src.height,
+                            "width": src.width,
+                            "profile": src.profile.copy(),
+                        }
+                    calculate_wdrvi(image, clearings_mask, metadata, wdrvi_path)
+                    feedback.pushInfo(f"[SUCCESS] WDRVI saved to {wdrvi_path}")
+            else:
+                power_line_clearings = find_clearing_algorithm(summer_path, winter_path)
+
+                if os.path.exists(temp_tiff):
+                    try:
+                        os.remove(temp_tiff)
+                    except PermissionError:
+                        feedback.pushInfo(
+                            f"[ERROR] Could not delete {temp_tiff}. File may be locked."
+                        )
+                        return {}
+
+                driver = gdal.GetDriverByName("GTiff")
+                out_ds = driver.Create(
+                    temp_tiff,
+                    power_line_clearings.shape[1],
+                    power_line_clearings.shape[0],
+                    4,
+                    gdal.GDT_Byte,
+                )
+                if out_ds is None:
+                    feedback.pushInfo(f"[ERROR] Failed to create {temp_tiff}")
+                    return {}
+
+                for i in range(4):
+                    out_ds.GetRasterBand(i + 1).WriteArray(
+                        power_line_clearings[:, :, i]
+                    )
+
+                src_ds = gdal.Open(summer_path)
+                out_ds.SetGeoTransform(src_ds.GetGeoTransform())
+                out_ds.SetProjection(src_ds.GetProjection())
+                out_ds.FlushCache()
+                out_ds = None
+                src_ds = None
+
+            feedback.pushInfo(f"[SUCCESS] Saved to {temp_tiff}")
+
+            if add_source_images:
+                if summer_layer.isValid():
+                    summer_layer_name = (
+                        f"summer_{os.path.splitext(os.path.basename(summer_path))[0]}"
+                    )
+                    existing_summer = QgsProject.instance().mapLayersByName(
+                        summer_layer_name
+                    )
+                    if existing_summer:
+                        QgsProject.instance().removeMapLayer(existing_summer[0].id())
+                    QgsProject.instance().addMapLayer(summer_layer)
+                    feedback.pushInfo(
+                        f"[SUCCESS] Summer image loaded to map as {summer_layer_name}"
+                    )
+                else:
+                    feedback.pushInfo(f"[ERROR] Failed to load summer image")
+                if not use_yolo and winter_path:
+                    winter_layer = QgsRasterLayer(
+                        winter_path,
+                        f"winter_{os.path.splitext(os.path.basename(winter_path))[0]}",
+                    )
+                    if winter_layer.isValid():
+                        winter_layer_name = f"winter_{os.path.splitext(os.path.basename(winter_path))[0]}"
+                        existing_winter = QgsProject.instance().mapLayersByName(
+                            winter_layer_name
+                        )
+                        if existing_winter:
+                            QgsProject.instance().removeMapLayer(
+                                existing_winter[0].id()
+                            )
+                        QgsProject.instance().addMapLayer(winter_layer)
+                        feedback.pushInfo(
+                            f"[SUCCESS] Winter image loaded to map as {winter_layer_name}"
+                        )
+                    else:
+                        feedback.pushInfo(f"[ERROR] Failed to load winter image")
+
+            layer_name = (
+                f"clearings_{os.path.splitext(os.path.basename(summer_path))[0]}"
+            )
+            clearings_layer = QgsRasterLayer(temp_tiff, layer_name)
+            if clearings_layer.isValid():
+                existing_layer = QgsProject.instance().mapLayersByName(layer_name)
+                if existing_layer:
+                    QgsProject.instance().removeMapLayer(existing_layer[0].id())
+                    feedback.pushInfo(f"Removed existing layer: {layer_name}")
+                if use_yolo:
+                    self.apply_clearings_color(clearings_layer)
+                QgsProject.instance().addMapLayer(clearings_layer)
+                feedback.pushInfo(
+                    f"[SUCCESS] Data loaded to map as layer: {layer_name}"
+                )
+            else:
+                feedback.pushInfo(f"[ERROR] Failed to load layer from {temp_tiff}")
+                return {"OUTPUT": temp_tiff}
+
+            if compute_wdrvi and use_yolo:
+                wdrvi_layer = QgsRasterLayer(
+                    wdrvi_path,
+                    f"wdrvi_{os.path.splitext(os.path.basename(summer_path))[0]}",
+                )
+                if wdrvi_layer.isValid():
+                    self.apply_wdrvi_color_ramp(wdrvi_layer)
+                    QgsProject.instance().addMapLayer(wdrvi_layer)
+                    feedback.pushInfo(
+                        f"[SUCCESS] WDRVI layer loaded to map with custom color ramp"
+                    )
+                else:
+                    feedback.pushInfo(f"[ERROR] Failed to load WDRVI layer")
+
+            feedback.pushInfo(f"[SUCCESS] Algorithm completed")
+            return {"OUTPUT": temp_tiff}
+
+        except Exception as e:
+            feedback.pushInfo(f"[ERROR] Algorithm failed: {str(e)}")
             return {}
-        
-        for i in range(4):
-            out_ds.GetRasterBand(i + 1).WriteArray(power_line_clearings[:, :, i])
-        
-        src_ds = gdal.Open(summer_path)
-        out_ds.SetGeoTransform(src_ds.GetGeoTransform())
-        out_ds.SetProjection(src_ds.GetProjection())
-        out_ds.FlushCache()
-        out_ds = None
-        src_ds = None
-
-        feedback.pushInfo(f'[SUCCESS] Saved to {temp_tiff}')
-    
-        layer_name = f"clearings_{os.path.splitext(os.path.basename(summer_path))[0]}"
-        clearings_layer = QgsRasterLayer(temp_tiff, layer_name)
-        if clearings_layer.isValid():
-            existing_layer = QgsProject.instance().mapLayersByName(layer_name)
-            if existing_layer:
-                QgsProject.instance().removeMapLayer(existing_layer[0].id())
-                feedback.pushInfo(f'Removed existing layer: {layer_name}')
-            QgsProject.instance().addMapLayer(clearings_layer)
-            feedback.pushInfo(f'[SUCCESS] Data loaded to map as layer: {layer_name}')
-        else:
-            feedback.pushInfo(f'[ERROR] Failed to load layer from {temp_tiff}')
-            return {'OUTPUT': temp_tiff}
-
-        feedback.pushInfo(f'[SUCCESS] Algorithm completed')
-        return {'OUTPUT': temp_tiff}
 
     def name(self):
-        return 'clearings_extractor'
+        return "clearings_extractor"
 
     def displayName(self):
-        return 'Extract Clearings'
+        return "Extract Clearings"
 
     def group(self):
-        return 'Clearings Extractor'
+        return "Clearings Extractor"
 
     def groupId(self):
-        return 'clearings_tools'
+        return "clearings_tools"
 
     def createInstance(self):
         return ClearingsExtractorAlgorithm()
-    
+
     def shortHelpString(self):
         return """
-The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the boundary detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
+The plugin detects forest clearings under power lines from Sentinel-2 satellite images. It supports two algorithms:
+1. Logistic Regression + Probabilistic Hough line: Uses a pre-trained logistic regression model to classify land cover, followed by edge detection and Hough transform to identify clearings. Requires both summer and winter images.
+2. YOLO Neural Network model: Uses a pre-trained YOLO model to directly segment clearings, requiring only a summer image. Optionally calculates the Wide Dynamic Range Vegetation Index (WDRVI).
 
 Steps:
-1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.
-2. Choose output directory for result.
-3. Click Run to process.
+1. Select a summer Sentinel-2 image in .tif format (at least 5 channels: Blue, Green, Red, NIR, SWIR).
+2. For Logistic Regression + Probabilistic Hough line, select a winter Sentinel-2 image in .tif format (at least 3 channels: Blue, Green, Red). Winter image must have the same dimensions as the summer image. For YOLO, winter image is not required.
+3. Choose output directory for results.
+4. Select the algorithm:
+   - Logistic Regression + Probabilistic Hough line: No additional input required.
+   - YOLO Neural Network: Optionally enable WDRVI calculation. The YOLO clearings mask and WDRVI (if calculated) are automatically added to the map.
+5. Optionally enable adding source images to the map (summer image for YOLO, both summer and winter for Logistic Regression + Probabilistic Hough line).
+6. Click Run to process.
         """
 
-    
+
 class IterateClearingsExtractor(QgsProcessingAlgorithm):
     """
-    IterateClearingsExtractor is a QGIS Processing Algorithm that processes pairs of summer and winter Sentinel-2 images at once to extract forest clearings under power lines.
-    Attributes:
-        SUMMER_DIR (str): Parameter name for the summer images directory.
-        WINTER_DIR (str): Parameter name for the winter images directory.
-        OUTPUT_DIR (str): Parameter name for the output directory.
+    IterateClearingsExtractor is a QGIS Processing Algorithm that detects forest clearings under power lines
+    from Sentinel-2 satellite images. It supports two algorithms for detection:
+    1. Logistic Regression + Probabilistic Hough Line:
+        - Uses a pre-trained logistic regression model to classify land cover.
+        - Applies edge detection and Hough transform to identify clearings.
+        - Requires both summer and winter images.
+    2. YOLO Neural Network Model:
+        - Uses a pre-trained YOLO model to directly segment clearings.
+        - Requires only a summer image.
+        - Optionally calculates the Wide Dynamic Range Vegetation Index (WDRVI).
+    Parameters:
+         - SUMMER_DIR (Folder): Directory containing summer Sentinel-2 images in .tif format.
+         - WINTER_DIR (Folder, optional): Directory containing winter Sentinel-2 images in .tif format.
+         - OUTPUT_DIR (Folder): Directory to save the output results.
+         - USE_YOLO (Boolean): Whether to use the YOLO Neural Network model for detection.
+         - CALCULATE_WDRVI (Boolean): Whether to calculate WDRVI (only applicable for YOLO).
     Methods:
-        initAlgorithm(config=None):
-            Initializes the algorithm with the required parameters.
-        processAlgorithm(parameters, context, feedback):
-            Processes the algorithm by iterating through summer images, matching them with corresponding winter images, and saving the results.
-        name():
-            Returns the algorithm name.
-        displayName():
-            Returns the display name of the algorithm.
-        group():
-            Returns the group name of the algorithm.
-        groupId():
-            Returns the group ID of the algorithm.
-        createInstance():
-            Creates a new instance of the algorithm.
-        shortHelpString():
-            Returns a short help string describing the algorithm and its requirements.
+         - initAlgorithm(config): Initializes the algorithm parameters.
+         - apply_wdrvi_color_ramp(layer): Applies a color ramp to WDRVI layers (-1: red, 0: yellow, 1: green).
+         - apply_clearings_color(layer): Applies red color to YOLO clearing masks and makes black background transparent.
+         - processAlgorithm(parameters, context, feedback): Processes the input images and applies the selected algorithm.
+         - name(): Returns the algorithm's unique name.
+         - displayName(): Returns the algorithm's display name.
+         - group(): Returns the group name for the algorithm.
+         - groupId(): Returns the group ID for the algorithm.
+         - createInstance(): Creates a new instance of the algorithm.
+         - shortHelpString(): Provides a detailed description of the algorithm and its usage.
+    Usage:
+         2. For Logistic Regression + Probabilistic Hough Line, select a winter Sentinel-2 image in .tif format
+             (at least 3 channels: Blue, Green, Red). Winter image must have the same dimensions as the summer image.
+             For YOLO, winter image is not required.
+         3. Choose an output directory for results.
+             - Logistic Regression + Probabilistic Hough Line: No additional input required.
+             - YOLO Neural Network: Optionally enable WDRVI calculation.
+         5. Click Run to process the images.
+    Returns:
+         - OUTPUT (List): A list of file paths to the processed output images.
     """
-    SUMMER_DIR = 'SUMMER_DIR'
-    WINTER_DIR = 'WINTER_DIR'
-    OUTPUT_DIR = 'OUTPUT_DIR'
+
+    SUMMER_DIR = "SUMMER_DIR"
+    WINTER_DIR = "WINTER_DIR"
+    OUTPUT_DIR = "OUTPUT_DIR"
+    USE_YOLO = "USE_YOLO"
+    CALCULATE_WDRVI = "CALCULATE_WDRVI"
 
     def initAlgorithm(self, config=None):
         """
-        Initializes the algorithm with the given configuration.
+        Initializes the algorithm by defining the input and output parameters.
 
-        This method adds three parameters to the algorithm:
-        1. SUMMER_DIR: A string parameter representing the directory of summer images.
-        2. WINTER_DIR: A string parameter representing the directory of winter images.
-        3. OUTPUT_DIR: A folder destination parameter representing the output directory.
+        Parameters:
+            config (dict, optional): Configuration dictionary for the algorithm.
 
-        Args:
-            config (dict, optional): Configuration dictionary. Defaults to None.
+        Parameters Added:
+            - SUMMER_DIR (QgsProcessingParameterFolderDestination):
+              Directory containing summer images.
+            - WINTER_DIR (QgsProcessingParameterFolderDestination, optional):
+              Directory containing winter images.
+            - OUTPUT_DIR (QgsProcessingParameterFolderDestination):
+              Directory where the output will be saved.
+            - USE_YOLO (QgsProcessingParameterBoolean):
+              Boolean flag to indicate whether to use the YOLO neural network.
+            - CALCULATE_WDRVI (QgsProcessingParameterBoolean):
+              Boolean flag to indicate whether to calculate WDRVI (applicable only when YOLO is used).
         """
-        self.addParameter(QgsProcessingParameterString(self.SUMMER_DIR, 'Summer Images Directory'))
-        self.addParameter(QgsProcessingParameterString(self.WINTER_DIR, 'Winter Images Directory'))
-        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, 'Output Directory'))
+        self.addParameter(
+            QgsProcessingParameterFolderDestination(
+                self.SUMMER_DIR, "Summer Images Directory"
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFolderDestination(
+                self.WINTER_DIR, "Winter Images Directory", optional=True
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFolderDestination(self.OUTPUT_DIR, "Output Directory")
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.USE_YOLO, "Use YOLO Neural Network", defaultValue=False
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.CALCULATE_WDRVI, "Calculate WDRVI (YOLO only)", defaultValue=False
+            )
+        )
+
+    def apply_wdrvi_color_ramp(self, layer):
+        """
+        Applies a WDRVI (Wide Dynamic Range Vegetation Index) color ramp to the given raster layer.
+        The color ramp is defined with three key points:
+        - Red color for the minimum value (-1.0)
+        - Yellow color for the midpoint value (0.0)
+        - Green color for the maximum value (1.0)
+        This function sets up a QgsRasterShader with an interpolated color ramp and assigns it
+        to the raster layer using a QgsSingleBandPseudoColorRenderer. After applying the renderer,
+        the layer is repainted to reflect the changes.
+        Args:
+            layer (QgsRasterLayer): The raster layer to which the WDRVI color ramp will be applied.
+        Returns:
+            None
+        """
+
+        shader = QgsRasterShader()
+        color_ramp = QgsColorRampShader()
+        color_ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        color_ramp.setMinimumValue(-1.0)
+        color_ramp.setMaximumValue(1.0)
+        color_ramp_items = [
+            QgsColorRampShader.ColorRampItem(-1.0, QColor(255, 0, 0), "-1"),
+            QgsColorRampShader.ColorRampItem(0.0, QColor(255, 255, 0), "0"),
+            QgsColorRampShader.ColorRampItem(1.0, QColor(0, 255, 0), "1"),
+        ]
+        color_ramp.setColorRampItemList(color_ramp_items)
+        shader.setRasterShaderFunction(color_ramp)
+        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        layer.setRenderer(renderer)
+        layer.triggerRepaint()
+
+    def apply_clearings_color(self, layer):
+        """
+        Applies a custom color rendering and transparency settings to a raster layer.
+        This method configures the RGB channels of the raster layer to highlight the red channel
+        while suppressing the green and blue channels. It also sets the black background (0, 0, 0)
+        to be fully transparent.
+        Args:
+            layer (QgsRasterLayer): The raster layer to which the color rendering and transparency
+                                    settings will be applied.
+        Behavior:
+            - If the layer is invalid or does not have at least 3 bands, the method returns without
+              making any changes.
+            - Configures the red channel to stretch between 0 and 255 for contrast enhancement.
+            - Sets the green and blue channels to a fixed value of 0.
+            - Applies transparency to pixels with RGB values of (0, 0, 0), making them fully transparent.
+            - Triggers a repaint of the layer to apply the changes.
+        Note:
+            This method is designed for use in QGIS and requires the QGIS Python API.
+        """
+
+        if not layer.isValid():
+            return
+        if layer.bandCount() >= 3:
+            renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
+            red_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            red_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            red_enhancement.setMinimumValue(0)
+            red_enhancement.setMaximumValue(255)
+            green_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            green_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            green_enhancement.setMinimumValue(0)
+            green_enhancement.setMaximumValue(0)
+            blue_enhancement = QgsContrastEnhancement(Qgis.DataType.Byte)
+            blue_enhancement.setContrastEnhancementAlgorithm(
+                QgsContrastEnhancement.StretchToMinimumMaximum
+            )
+            blue_enhancement.setMinimumValue(0)
+            blue_enhancement.setMaximumValue(0)
+            renderer.setRedContrastEnhancement(red_enhancement)
+            renderer.setGreenContrastEnhancement(green_enhancement)
+            renderer.setBlueContrastEnhancement(blue_enhancement)
+
+            transparency = QgsRasterTransparency()
+            transparent_pixel = QgsRasterTransparency.TransparentThreeValuePixel()
+            transparent_pixel.red = 0
+            transparent_pixel.green = 0
+            transparent_pixel.blue = 0
+            transparent_pixel.percentTransparent = 100.0
+            transparency_list = [transparent_pixel]
+            transparency.setTransparentThreeValuePixelList(transparency_list)
+
+            layer.setRenderer(renderer)
+            layer.renderer().setRasterTransparency(transparency)
+            layer.triggerRepaint()
 
     def processAlgorithm(self, parameters, context, feedback):
         """
-        Processes the algorithm to extract clearings from summer and winter images.
+        Processes the algorithm for extracting clearings from satellite images.
 
-        Parameters:
-        parameters (dict): Dictionary of parameters passed to the algorithm.
-        context (QgsProcessingContext): Context in which the algorithm is run.
-        feedback (QgsProcessingFeedback): Feedback object to report progress and information.
+        This method processes summer and optionally winter satellite images to extract clearings
+        using either YOLO-based or Logistic Regression-based approaches. The results are saved
+        to the specified output directory.
+
+        Args:
+            parameters (dict): A dictionary of input parameters for the algorithm.
+                - SUMMER_DIR (str): Path to the directory containing summer images.
+                - WINTER_DIR (str): Path to the directory containing winter images (optional if YOLO is used).
+                - OUTPUT_DIR (str): Path to the directory where output files will be saved.
+                - USE_YOLO (bool): Whether to use YOLO for processing (True) or Logistic Regression (False).
+                - CALCULATE_WDRVI (bool): Whether to compute the WDRVI index during processing.
+            context (QgsProcessingContext): The context in which the algorithm is executed.
+            feedback (QgsProcessingFeedback): Feedback object for logging messages and progress.
 
         Returns:
-        dict: A dictionary containing the output paths of the processed files.
+            dict: A dictionary containing the results of the processing.
+                - OUTPUT (list): A list of file paths to the processed output files.
 
-        The function performs the following steps:
-        1. Retrieves the directories for summer images, winter images, and output from the parameters.
-        2. Lists all summer image files in the summer directory.
-        3. For each summer image file, checks if a corresponding winter image file exists in the winter directory.
-        4. If both summer and winter image files are valid, runs the "clearings_extractor:clearings_extractor" processing algorithm.
-        5. Collects the output paths of successfully processed files.
-        6. Returns a dictionary containing the list of output paths.
+        Notes:
+            - If YOLO is used, winter images are not required.
+            - The method logs progress and errors using the feedback object.
+            - Each summer image is processed individually, and the processing time is logged.
+            - If a winter image corresponding to a summer image is missing (when not using YOLO),
+              the summer image is skipped.
         """
         summer_dir = self.parameterAsString(parameters, self.SUMMER_DIR, context)
         winter_dir = self.parameterAsString(parameters, self.WINTER_DIR, context)
         output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
+        use_yolo = self.parameterAsBool(parameters, self.USE_YOLO, context)
+        compute_wdrvi = self.parameterAsBool(parameters, self.CALCULATE_WDRVI, context)
 
-        summer_files = [f for f in os.listdir(summer_dir) if f.endswith('.tif')]
+        if use_yolo:
+            winter_dir = None
+
+        summer_files = [f for f in os.listdir(summer_dir) if f.endswith(".tif")]
         feedback.pushInfo(f"Found {len(summer_files)} summer images")
 
         processed_files = []
         for summer_file in summer_files:
-            winter_file = summer_file
-            winter_path = os.path.join(winter_dir, winter_file)
-
-            if os.path.exists(winter_path):
-                summer_path = os.path.join(summer_dir, summer_file)
-                feedback.pushInfo(f"Processing pair: {summer_file} (summer image) and {winter_file} (winter image)")
-
-                summer_layer = QgsRasterLayer(summer_path, "summer")
-                winter_layer = QgsRasterLayer(winter_path, "winter")
-                if not summer_layer.isValid() or not winter_layer.isValid():
-                    feedback.pushInfo(f'[ERROR] Failed to load {summer_file} or {winter_file}')
+            summer_path = os.path.join(summer_dir, summer_file)
+            winter_path = None
+            if not use_yolo:
+                winter_file = summer_file
+                winter_path = (
+                    os.path.join(winter_dir, winter_file) if winter_dir else None
+                )
+                if not winter_path or not os.path.exists(winter_path):
+                    feedback.pushInfo(
+                        f"[ERROR] Winter image {winter_file} not found for Logistic Regression"
+                    )
                     continue
 
-                alg_params = {
-                    'SUMMER_IMAGE': summer_layer,
-                    'WINTER_IMAGE': winter_layer,
-                    'OUTPUT_DIR': output_dir
-                }
-                result = processing.run("clearings_extractor:clearings_extractor", alg_params, context=context, feedback=feedback)
+            feedback.pushInfo(
+                f"Processing summer image: {summer_file}"
+                + (f" and winter image: {winter_file}" if winter_path else "")
+            )
 
-                if 'OUTPUT' in result:
-                    output_path = result['OUTPUT']
-                    processed_files.append(output_path)
-                    feedback.pushInfo(f'[SUCCESS] Completed: {output_path}')
-                else:
-                    feedback.pushInfo(f'[ERROR] Failed to process {summer_file}')
+            summer_layer = QgsRasterLayer(summer_path, "summer")
+            if not summer_layer.isValid():
+                feedback.pushInfo(f"[ERROR] Failed to load {summer_file}")
+                continue
 
-        feedback.pushInfo(f'[SUCCESS] Algorithm completed')
-        return {'OUTPUT': processed_files}
+            start_time = time.time()
+
+            alg_params = {
+                "SUMMER_IMAGE": summer_layer,
+                "WINTER_IMAGE": QgsRasterLayer(winter_path, "winter")
+                if winter_path
+                else None,
+                "OUTPUT_DIR": output_dir,
+                "USE_YOLO": use_yolo,
+                "CALCULATE_WDRVI": compute_wdrvi,
+                "ADD_SOURCE_IMAGES": False,
+            }
+            result = processing.run(
+                "clearings_extractor:clearings_extractor",
+                alg_params,
+                context=context,
+                feedback=feedback,
+            )
+
+            end_time = time.time()
+            processing_time = end_time - start_time
+            feedback.pushInfo(
+                f"[INFO] Processing {summer_file} took {processing_time:.2f} seconds"
+            )
+
+            if "OUTPUT" in result:
+                output_path = result["OUTPUT"]
+                processed_files.append(output_path)
+                feedback.pushInfo(f"[SUCCESS] Completed: {output_path}")
+            else:
+                feedback.pushInfo(f"[ERROR] Failed to process {summer_file}")
+
+        feedback.pushInfo(f"[SUCCESS] Algorithm completed")
+        return {"OUTPUT": processed_files}
 
     def name(self):
-        return 'iterate_clearings_extractor'
+        return "iterate_clearings_extractor"
 
     def displayName(self):
-        return 'Iterate Clearings Extractor'
+        return "Iterate Clearings Extractor"
 
     def group(self):
-        return 'Clearings Extractor Tools'
+        return "Clearings Extractor Tools"
 
     def groupId(self):
-        return 'clearings_tools'
+        return "clearings_tools"
 
     def createInstance(self):
         return IterateClearingsExtractor()
-    
+
     def shortHelpString(self):
         return """
-The plugin extracts forest clearings under power lines on Sentinel-2 satellite images. Before applying the algorithm, the images are pre-processed, including normalization and contrast reduction. The plugin uses the previously trained Logistic Regression to create a classification map. From the resulting map, a binary mask of the class of low vegetation, or "grassland", is extracted. The mask is then used to find lines using the boundary detector and the Hough Probabilistic Transform. Selected lines refer to forest clearings boundaries in raster format.
-
-The algorithm receives two directories as input - one with summer images and one with winter images. The filenames of the images for the same area must match for the algorithm to successfully find the winter image that corresponds to the summer image for a given area. The algorithm processes each pair of images iteratively until all pairs in the two directories have been processed.
+The plugin detects forest clearings under power lines from Sentinel-2 satellite images. It supports two algorithms:
+1. Logistic Regression + Probabilistic Hough line: Uses a pre-trained logistic regression model to classify land cover, followed by edge detection and Hough transform to identify clearings. Requires both summer and winter images.
+2. YOLO Neural Network model: Uses a pre-trained YOLO model to directly segment clearings, requiring only a summer image. Optionally calculates the Wide Dynamic Range Vegetation Index (WDRVI).
 
 Steps:
-1. Select summer and winter Sentinel-2 images in .tif format. Summer image must have 5 channels in the next order: Blue (B2), Green (B3), Red (B4), Near Infrared (B8) and Shortwave Infrared (B11), and winter image must have 3 channels in the next order: Blue (B2), Green (B3) and Red (B4). Both images must have the same width and height in pixels.
-2. Choose output directory for result.
-3. Click Run to process.
+1. Select a summer Sentinel-2 image in .tif format (at least 5 channels: Blue, Green, Red, NIR, SWIR).
+2. For Logistic Regression + Probabilistic Hough line, select a winter Sentinel-2 image in .tif format (at least 3 channels: Blue, Green, Red). Winter image must have the same dimensions as the summer image. For YOLO, winter image is not required.
+3. Choose output directory for results.
+4. Select the algorithm:
+   - Logistic Regression + Probabilistic Hough line: No additional input required.
+   - YOLO Neural Network: Optionally enable WDRVI calculation. The YOLO clearings mask and WDRVI (if calculated) are automatically added to the map.
+5. Optionally enable adding source images to the map (summer image for YOLO, both summer and winter for Logistic Regression + Probabilistic Hough line).
+6. Click Run to process.
         """
 
+
 class ClearingsExtractorProvider(QgsProcessingProvider):
-    """
-    ClearingsExtractorProvider is a custom QgsProcessingProvider that adds
-    algorithms for extracting clearings.
-
-    Methods
-    -------
-    loadAlgorithms(*args, **kwargs)
-        Adds the ClearingsExtractorAlgorithm and IterateClearingsExtractor algorithms to the provider.
-
-    id(*args, **kwargs)
-        Returns the unique identifier for this provider.
-
-    name(*args, **kwargs)
-        Returns the name of this provider.
-
-    longName(*args, **kwargs)
-        Returns the long name of this provider, which is the same as the name.
-    """
     def loadAlgorithms(self, *args, **kwargs):
         self.addAlgorithm(ClearingsExtractorAlgorithm())
         self.addAlgorithm(IterateClearingsExtractor())
 
     def id(self, *args, **kwargs):
-        return 'clearings_extractor'
+        return "clearings_extractor"
 
     def name(self, *args, **kwargs):
-        return 'Clearings Extractor'
+        return "Clearings Extractor"
 
     def longName(self, *args, **kwargs):
         return self.name()
