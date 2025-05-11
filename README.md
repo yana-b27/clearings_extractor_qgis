@@ -53,5 +53,7 @@ clearings_extractor_qgis/
 
 [![Plugin example](./assets/preview.png)](https://drive.google.com/file/d/1oe7grTqy6GXvybtimDTYfABXdhE61Yso/view?usp=sharing)
 
+## Web map example
 
+Web map example of calculated power line clearings masks and WDRVI indices on the [link](https://ee-ybahramhan.projects.earthengine.app/view/power-line-clearings-monitoring)
 
