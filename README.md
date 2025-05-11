@@ -51,7 +51,7 @@ clearings_extractor_qgis/
 
 Сlick on the preview below to open the video in Google Drive:
 
-[![Plugin example](./assets/preview.png)](https://drive.google.com/file/d/1oe7grTqy6GXvybtimDTYfABXdhE61Yso/view?usp=sharing)
+[![Plugin example](./assets/preview.png)](https://drive.google.com/file/d/1WjCEMucr6DhwV8ld7V8daVYBqXGaJj6H/view?usp=sharing)
 
 ## Web map example
 
